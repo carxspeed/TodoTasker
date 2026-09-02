@@ -6,17 +6,25 @@ import json
 import sys
 
 from daily_brief.config import ConfigurationError, load_settings
-from daily_brief.notion import NotionClient, NotionError
+from daily_brief.notion import NotionError, NotionTaskStore
 
 
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     try:
-        settings = load_settings(required=("NOTION_TOKEN", "NOTION_WORK_DB_ID"))
-        snapshot = NotionClient(
+        settings = load_settings(
+            required=(
+                "NOTION_TOKEN",
+                "NOTION_WORK_DB_ID",
+                "NOTION_SCHOOL_DB_ID",
+                "NOTION_CONNECTIONS_DB_ID",
+                "NOTION_MISC_DB_ID",
+            )
+        )
+        snapshot = NotionTaskStore(
             settings.notion_token,
-            settings.notion_work_db_id,
+            settings.notion_database_ids,
             settings.notion_parent_page_id,
         ).get_active_work()
         print(

@@ -43,6 +43,16 @@ def test_malformed_json_configuration_fails_loudly(
 
 def test_notion_ids_are_normalized(tmp_path: Path) -> None:
     env = tmp_path / ".env"
-    write_env(env, NOTION_PARENT_PAGE_ID="01234567-89ab-cdef-0123-456789abcdef")
-    assert load_settings(env).notion_parent_page_id == "0123456789abcdef0123456789abcdef"
-
+    value = "01234567-89ab-cdef-0123-456789abcdef"
+    write_env(
+        env,
+        NOTION_PARENT_PAGE_ID=value,
+        NOTION_WORK_DB_ID=value,
+        NOTION_SCHOOL_DB_ID=value,
+        NOTION_CONNECTIONS_DB_ID=value,
+        NOTION_MISC_DB_ID=value,
+    )
+    settings = load_settings(env)
+    assert settings.notion_parent_page_id == "0123456789abcdef0123456789abcdef"
+    assert settings.notion_databases_configured
+    assert set(settings.notion_database_ids) == {"Work", "School", "Connections", "Misc"}

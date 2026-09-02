@@ -50,6 +50,9 @@ class Settings(BaseModel):
     notion_token: str = ""
     notion_parent_page_id: str = ""
     notion_work_db_id: str = ""
+    notion_school_db_id: str = ""
+    notion_connections_db_id: str = ""
+    notion_misc_db_id: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     ical_url: str = ""
@@ -75,13 +78,32 @@ class Settings(BaseModel):
             raise ValueError(f"unknown IANA timezone: {value}") from exc
         return value
 
-    @field_validator("notion_parent_page_id", "notion_work_db_id")
+    @field_validator(
+        "notion_parent_page_id",
+        "notion_work_db_id",
+        "notion_school_db_id",
+        "notion_connections_db_id",
+        "notion_misc_db_id",
+    )
     @classmethod
     def valid_optional_page_id(cls, value: str) -> str:
         compact = value.replace("-", "").strip()
         if compact and not PAGE_ID_RE.fullmatch(compact):
             raise ValueError("must be a 32-character hexadecimal Notion id")
         return compact
+
+    @property
+    def notion_database_ids(self) -> dict[str, str]:
+        return {
+            "Work": self.notion_work_db_id,
+            "School": self.notion_school_db_id,
+            "Connections": self.notion_connections_db_id,
+            "Misc": self.notion_misc_db_id,
+        }
+
+    @property
+    def notion_databases_configured(self) -> bool:
+        return all(self.notion_database_ids.values())
 
     @field_validator("no_school_patterns", "informational_all_day_patterns")
     @classmethod
@@ -164,6 +186,9 @@ def load_settings(
         "notion_token": values.get("NOTION_TOKEN", ""),
         "notion_parent_page_id": values.get("NOTION_PARENT_PAGE_ID", ""),
         "notion_work_db_id": values.get("NOTION_WORK_DB_ID", ""),
+        "notion_school_db_id": values.get("NOTION_SCHOOL_DB_ID", ""),
+        "notion_connections_db_id": values.get("NOTION_CONNECTIONS_DB_ID", ""),
+        "notion_misc_db_id": values.get("NOTION_MISC_DB_ID", ""),
         "telegram_bot_token": values.get("TELEGRAM_BOT_TOKEN", ""),
         "telegram_chat_id": values.get("TELEGRAM_CHAT_ID", ""),
         "ical_url": values.get("ICAL_URL", ""),
@@ -184,4 +209,3 @@ def load_settings(
         return Settings.model_validate(payload)
     except Exception as exc:
         raise ConfigurationError(str(exc)) from exc
-

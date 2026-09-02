@@ -3,7 +3,7 @@
 Daily Brief is a local-first Windows tasker that combines:
 
 - assignments collected from Canvas;
-- work items kept in a Notion database;
+- tasks kept in four Notion databases: Work, School, Connections, and Misc;
 - events from a Google Calendar iCalendar feed;
 - an evening check-in and morning brief delivered through Telegram.
 
@@ -90,8 +90,11 @@ The main settings are:
 | Setting | Purpose | Needed |
 |---|---|---|
 | `NOTION_TOKEN` | Secret for the Notion internal integration | Yes |
-| `NOTION_PARENT_PAGE_ID` | ID of the Notion page that will contain the work database | Yes |
-| `NOTION_WORK_DB_ID` | Created automatically by `setup_notion_db.py` | Later |
+| `NOTION_PARENT_PAGE_ID` | ID of the Notion page that will contain the four task databases | Yes |
+| `NOTION_WORK_DB_ID` | Work database ID, created automatically by `setup_notion_db.py` | Later |
+| `NOTION_SCHOOL_DB_ID` | School database ID, created automatically | Later |
+| `NOTION_CONNECTIONS_DB_ID` | Connections database ID, created automatically | Later |
+| `NOTION_MISC_DB_ID` | Misc database ID, created automatically | Later |
 | `TELEGRAM_BOT_TOKEN` | Token issued by BotFather | Yes |
 | `TELEGRAM_CHAT_ID` | Your numeric Telegram conversation ID | Created automatically |
 | `ICAL_URL` | Google Calendar secret iCal URL | Yes |
@@ -137,16 +140,15 @@ If a bot token is ever exposed, revoke it with BotFather, generate a replacement
 3. In Notion, create or open a page named **To Do List**.
 4. Open that page's connection/integration menu and add `Todo Agent`. Creating an integration does not automatically give it access to your pages.
 5. Copy the page URL. Its page ID is the 32-character hexadecimal value in the URL; hyphens are accepted. Put it in `.env` as `NOTION_PARENT_PAGE_ID`.
-6. Leave `NOTION_WORK_DB_ID` empty, save `.env`, and run:
+6. Leave all four `NOTION_*_DB_ID` settings empty, save `.env`, and run:
 
    ```powershell
    venv\Scripts\python.exe setup_notion_db.py
    ```
 
-The helper creates or validates one database named **Work** below the parent page, synchronizes its Area choices, and writes its ID to `NOTION_WORK_DB_ID`. The database schema includes:
+The helper creates or validates four separate databases named **Work**, **School**, **Connections**, and **Misc** below the parent page, then writes each ID to its matching `.env` setting. Every database uses the same schema:
 
 - `Name`;
-- `Area`;
 - `Type`;
 - `Cadence`;
 - `Last touched`;
@@ -155,9 +157,9 @@ The helper creates or validates one database named **Work** below the parent pag
 - `Deadline`;
 - `Effort`.
 
-Use the `Area` field to organize manually managed tasks into **Work**, **School**, **Connections**, or **Misc**. Canvas assignments are collected automatically, so only add school tasks here when they are not represented in Canvas.
+The table containing a task is its Area. Telegram check-ins route new tasks to the matching database and the daily brief reads active rows from all four. Canvas assignments are collected automatically, so only add school tasks to **School** when they are not represented in Canvas.
 
-Add three to five real active items to the Work database so the first brief has useful data. Keep each row's `Name`, `Status`, and `Next step` current.
+Add three to five real active items across the four databases so the first brief has useful data. Keep each row's `Name`, `Status`, and `Next step` current.
 
 If Notion returns 404, check both the page ID and whether the parent page is connected to `Todo Agent`.
 
@@ -342,7 +344,7 @@ Revoke and replace the bot token through BotFather. Reset the secret iCal addres
 
 ### Notion returns 404
 
-Verify `NOTION_PARENT_PAGE_ID` or `NOTION_WORK_DB_ID`, then confirm the relevant page/database is shared with the internal integration.
+Verify `NOTION_PARENT_PAGE_ID` and all four `NOTION_*_DB_ID` settings, then confirm the relevant page/database is shared with the internal integration.
 
 ### Ollama is unavailable
 

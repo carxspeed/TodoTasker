@@ -20,10 +20,12 @@ def test_example_environment_contains_no_credentials() -> None:
         "NOTION_TOKEN",
         "NOTION_PARENT_PAGE_ID",
         "NOTION_WORK_DB_ID",
+        "NOTION_SCHOOL_DB_ID",
+        "NOTION_CONNECTIONS_DB_ID",
+        "NOTION_MISC_DB_ID",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_CHAT_ID",
         "ICAL_URL",
         "ANTHROPIC_API_KEY",
     ):
         assert entries[key] == ""
-

@@ -29,7 +29,7 @@ from .models import (
     PreparedSources,
     SeenAssignment,
 )
-from .notion import NotionClient
+from .notion import NotionClient, NotionTaskStore
 from .render import deterministic_guidance, render_brief
 from .runtime import SourceCache, alert_incident, normalized_hash, resolve_incident_dir
 from .state import StateStore
@@ -78,11 +78,11 @@ class LiveSourceProvider:
                 context.close()
 
     def fetch_notion(self) -> NotionSnapshot:
-        if not self.settings.notion_token or not self.settings.notion_work_db_id:
+        if not self.settings.notion_token or not self.settings.notion_databases_configured:
             raise RuntimeError("Notion is not configured")
-        work = NotionClient(
+        work = NotionTaskStore(
             self.settings.notion_token,
-            self.settings.notion_work_db_id,
+            self.settings.notion_database_ids,
             self.settings.notion_parent_page_id,
         ).get_active_work()
         return NotionSnapshot(fetched_at=utc_now(), items=work.items, warnings=work.warnings)

@@ -14,7 +14,7 @@ The `.env` file, Playwright profile, runtime state, caches, generated briefs, in
 
 ## Live-service prerequisites
 
-1. Share the Notion “To Do List” parent page with the “Todo Agent” integration and place its 32-character page id and integration token in `.env`.
+1. Share the Notion “To Do List” parent page with the “Todo Agent” integration, place its 32-character page id and integration token in `.env`, then run `setup_notion_db.py` to create or validate the Work, School, Connections, and Misc databases.
 2. Create a Telegram bot, send it one message, then use `getUpdates` once to determine the chat id.
 3. Add the Google Calendar secret iCal address to `.env`.
 4. Run `venv\Scripts\python.exe canvas.py login`, complete Microsoft SSO manually, press Enter, and close the browser cleanly.

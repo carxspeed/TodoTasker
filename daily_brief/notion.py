@@ -17,7 +17,7 @@ from .models import NotionWorkItem
 
 NOTION_API = "https://api.notion.com/v1"
 NOTION_VERSION = "2022-06-28"
-AREAS = ["Work", "School", "Connections", "Misc"]
+TASK_DATABASES = ("Work", "School", "Connections", "Misc")
 TYPES = ["Project", "Task", "Recurring"]
 CADENCES = ["Daily", "2x/week", "Weekly", "Biweekly", "None"]
 STATUSES = ["Active", "Paused", "Done"]
@@ -65,7 +65,6 @@ def database_schema() -> dict[str, Any]:
 
     return {
         "Name": {"title": {}},
-        "Area": options(AREAS),
         "Type": options(TYPES),
         "Cadence": options(CADENCES),
         "Last touched": {"date": {}},
@@ -79,7 +78,6 @@ def database_schema() -> dict[str, Any]:
 def work_properties(fields: dict[str, Any]) -> dict[str, Any]:
     builders = {
         "Name": title_property,
-        "Area": select_property,
         "Type": select_property,
         "Cadence": select_property,
         "Last touched": date_property,
@@ -243,18 +241,12 @@ class NotionClient:
     def retrieve_database(self) -> dict[str, Any]:
         return self._json("GET", f"/databases/{self.work_db_id}")
 
-    def update_work_database_areas(self) -> dict[str, Any]:
-        return self._json(
-            "PATCH",
-            f"/databases/{self.work_db_id}",
-            payload={"properties": {"Area": database_schema()["Area"]}},
-            idempotent=True,
-        )
-
-    def create_work_database(self) -> dict[str, Any]:
+    def create_work_database(self, title: str = "Work") -> dict[str, Any]:
+        if title not in TASK_DATABASES:
+            raise ValueError(f"unknown task database: {title}")
         payload = {
             "parent": {"type": "page_id", "page_id": self.parent_page_id},
-            "title": [{"type": "text", "text": {"content": "Work"}}],
+            "title": [{"type": "text", "text": {"content": title}}],
             "properties": database_schema(),
         }
         return self._json("POST", "/databases", payload=payload, idempotent=False)
@@ -276,6 +268,14 @@ class NotionClient:
                 "properties": work_properties(fields),
             },
             idempotent=False,
+        )
+
+    def archive_work_item(self, page_id: str) -> dict[str, Any]:
+        return self._json(
+            "PATCH",
+            f"/pages/{page_id}",
+            payload={"archived": True},
+            idempotent=True,
         )
 
     def list_block_children(self, block_id: str) -> list[dict[str, Any]]:
@@ -497,3 +497,55 @@ class NotionClient:
         journal["phase"] = "complete"
         atomic_write_json(journal_path, journal)
         return BriefPageResult(page.page_id, page.url, warnings)
+
+
+class NotionTaskStore:
+    """Treat the four task databases as one logical task collection."""
+
+    def __init__(
+        self,
+        token: str = "",
+        database_ids: dict[str, str] | None = None,
+        parent_page_id: str = "",
+        *,
+        clients: dict[str, Any] | None = None,
+    ) -> None:
+        if clients is not None:
+            self.clients = clients
+        else:
+            configured = database_ids or {}
+            missing = [name for name in TASK_DATABASES if not configured.get(name)]
+            if missing:
+                raise NotionError(
+                    "missing Notion task databases: " + ", ".join(missing)
+                )
+            self.clients = {
+                name: NotionClient(token, configured[name], parent_page_id)
+                for name in TASK_DATABASES
+            }
+        missing_clients = [name for name in TASK_DATABASES if name not in self.clients]
+        if missing_clients:
+            raise NotionError(
+                "missing Notion task database clients: " + ", ".join(missing_clients)
+            )
+
+    def get_active_work(self) -> WorkSnapshot:
+        items: list[NotionWorkItem] = []
+        warnings: list[str] = []
+        for name in TASK_DATABASES:
+            snapshot = self.clients[name].get_active_work()
+            items.extend(item.model_copy(update={"area": name}) for item in snapshot.items)
+            warnings.extend(f"{name}: {warning}" for warning in snapshot.warnings)
+        return WorkSnapshot(items=items, warnings=warnings)
+
+    def create_work_item(self, fields: dict[str, Any]) -> dict[str, Any]:
+        database = str(fields.get("Area") or "Misc")
+        if database not in self.clients:
+            raise ValueError(f"unknown task database: {database}")
+        properties = {name: value for name, value in fields.items() if name != "Area"}
+        return self.clients[database].create_work_item(properties)
+
+    def update_work_item(self, page_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+        if "Area" in fields:
+            raise ValueError("moving tasks between Notion databases is not supported")
+        return self.clients["Work"].update_work_item(page_id, fields)

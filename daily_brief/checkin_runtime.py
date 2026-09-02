@@ -15,7 +15,7 @@ from .checkin import (
 )
 from .config import Settings
 from .models import DailyBriefState, FailedCheckinBatch
-from .notion import NotionClient
+from .notion import NotionTaskStore
 from .runtime import normalized_hash
 from .state import StateStore
 from .telegram import TelegramClient
@@ -29,7 +29,7 @@ class CheckinRunner:
         *,
         state_store: StateStore | None = None,
         telegram: TelegramClient | None = None,
-        notion: NotionClient | None = None,
+        notion: NotionTaskStore | None = None,
         state_dir: str | Path = "state",
         ollama_session=None,
     ) -> None:
@@ -41,9 +41,9 @@ class CheckinRunner:
         self.telegram = telegram or TelegramClient(
             settings.telegram_bot_token, settings.telegram_chat_id
         )
-        self.notion = notion or NotionClient(
+        self.notion = notion or NotionTaskStore(
             settings.notion_token,
-            settings.notion_work_db_id,
+            settings.notion_database_ids,
             settings.notion_parent_page_id,
         )
         self.ollama_session = ollama_session
@@ -224,4 +224,3 @@ class CheckinRunner:
         state.checkin_prompt_message_id = result.message_id
         self.state_store.save(state)
         return "SENT"
-
