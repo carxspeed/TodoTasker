@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "fetched_at": "2026-09-01T20:00:00Z",
+  "source": "fixture",
+  "assignments": [
+    {
+      "key": "assignment:101",
+      "source_key": "assignment:101",
+      "object_id": 101,
+      "assignment_id": 101,
+      "course_id": 12,
+      "name": "Synthetic physics worksheet",
+      "course": "Physics",
+      "kind": "assignment",
+      "due_at": "2026-09-02T23:59:00-07:00",
+      "points": 10,
+      "url": "https://canvas.invalid/courses/12/assignments/101",
+      "description": "Complete the synthetic practice problems.",
+      "submission_status": "unsubmitted",
+      "needs_confirmation": false
+    }
+  ],
+  "canvas_events": [],
+  "canvas_reminders": [],
+  "planners": [],
+  "planner_events": [],
+  "planner_observations": [],
+  "announcements": [],
+  "data_warnings": [],
+  "source_status": {
+    "planner_items": "ok",
+    "missing_submissions": "ok",
+    "courses": "ok",
+    "announcements": "ok"
+  }
+}
+
