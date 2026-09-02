@@ -26,7 +26,7 @@ from .models import (
 from .timeutils import utc_now
 
 
-AREAS = Literal["MindSpark", "Biosensor", "GoDaddy", "AI Club", "College Apps", "Personal"]
+AREAS = Literal["Work", "School", "Connections", "Misc"]
 
 
 class ExtractionModel(BaseModel):
@@ -75,8 +75,8 @@ class CheckinExtraction(ExtractionModel):
 
 
 EXTRACTION_PROMPT = """Extract from the user's evening notes. Reply with ONLY valid JSON, no other text:
-{"capacity":null,"done":["..."],"new_items":[{"name":"...","area":"Personal","deadline":null}],"next_steps":[{"project":"...","step":"..."}],"unknown_next_step":["..."],"effort_corrections":[{"task":"...","effort":"S|M|L"}]}
-Each normalized task/project name may appear in only one of done, next_steps, or unknown_next_step. If the user is uncertain about a next step, use only unknown_next_step. If the user says a task took much more or less time than expected, record it in effort_corrections using non-overlapping ranges: S = under 45 minutes, M = 45 minutes to under 2 hours, L = 2 hours or more. If bandwidth is not stated or clearly implied, use null. For a new item whose area is not stated, use Personal. Resolve relative deadline words against local_today in the supplied timezone; if the date remains ambiguous, use null. Deadlines must be YYYY-MM-DD or null."""
+{"capacity":null,"done":["..."],"new_items":[{"name":"...","area":"Misc","deadline":null}],"next_steps":[{"project":"...","step":"..."}],"unknown_next_step":["..."],"effort_corrections":[{"task":"...","effort":"S|M|L"}]}
+Each normalized task/project name may appear in only one of done, next_steps, or unknown_next_step. If the user is uncertain about a next step, use only unknown_next_step. If the user says a task took much more or less time than expected, record it in effort_corrections using non-overlapping ranges: S = under 45 minutes, M = 45 minutes to under 2 hours, L = 2 hours or more. If bandwidth is not stated or clearly implied, use null. The only valid areas are Work, School, Connections, and Misc. For a new item whose area is not stated, use Misc. Resolve relative deadline words against local_today in the supplied timezone; if the date remains ambiguous, use null. Deadlines must be YYYY-MM-DD or null."""
 
 
 def normalize_name(value: str) -> str:

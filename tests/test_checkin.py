@@ -2,6 +2,9 @@ import copy
 import json
 from datetime import date, datetime, timedelta, timezone
 
+import pytest
+from pydantic import ValidationError
+
 from daily_brief.checkin import (
     CheckinExtraction,
     apply_operation_plan,
@@ -82,7 +85,7 @@ def test_extraction_is_one_local_structured_call_and_omitted_capacity_stays_null
 
 
 def test_invalid_deadline_and_cross_array_collision_reject_whole_extraction() -> None:
-    invalid = Session(extraction_json(new_items=[{"name": "x", "area": "Personal", "deadline": "tomorrow"}]))
+    invalid = Session(extraction_json(new_items=[{"name": "x", "area": "Misc", "deadline": "tomorrow"}]))
     assert extract_checkin_local(
         "new x", local_today=date(2026, 9, 1), checkin_sent_for=date(2026, 9, 2), timezone_name="America/Los_Angeles", session=invalid
     ) is None
@@ -90,6 +93,18 @@ def test_invalid_deadline_and_cross_array_collision_reject_whole_extraction() ->
     assert extract_checkin_local(
         "conflict", local_today=date(2026, 9, 1), checkin_sent_for=date(2026, 9, 2), timezone_name="America/Los_Angeles", session=collision
     ) is None
+
+
+def test_new_item_areas_match_the_notion_database() -> None:
+    for area in ("Work", "School", "Connections", "Misc"):
+        result = CheckinExtraction.model_validate_json(
+            extraction_json(new_items=[{"name": "x", "area": area, "deadline": None}])
+        )
+        assert result.new_items[0].area == area
+    with pytest.raises(ValidationError):
+        CheckinExtraction.model_validate_json(
+            extraction_json(new_items=[{"name": "x", "area": "Personal", "deadline": None}])
+        )
 
 
 def test_freeze_replies_keeps_only_matching_chat_after_prompt() -> None:
@@ -152,7 +167,7 @@ class FakeNotion:
 
 def test_new_item_crash_replay_does_not_duplicate() -> None:
     extraction = CheckinExtraction.model_validate_json(
-        extraction_json(new_items=[{"name": "New project", "area": "Personal", "deadline": None}])
+        extraction_json(new_items=[{"name": "New project", "area": "Misc", "deadline": None}])
     )
     plan = build_operation_plan(
         extraction,
@@ -193,4 +208,3 @@ def test_new_item_crash_replay_does_not_duplicate() -> None:
         persist=lambda value: None,
     )
     assert notion.created == 1
-

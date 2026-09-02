@@ -25,8 +25,12 @@ def main() -> int:
         )
         client.retrieve_parent_page()
         if settings.notion_work_db_id:
-            database = client.retrieve_database()
-            print(f"Validated existing Work database: {database.get('id', settings.notion_work_db_id)}")
+            client.retrieve_database()
+            database = client.update_work_database_areas()
+            print(
+                "Validated existing Work database and synchronized Area options: "
+                f"{database.get('id', settings.notion_work_db_id)}"
+            )
         else:
             database = client.create_work_database()
             persist_work_db_id(Path(".env"), database["id"])

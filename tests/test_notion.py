@@ -2,6 +2,7 @@ from datetime import date
 
 from daily_brief.http import JsonResponse
 from daily_brief.notion import (
+    AREAS,
     NotionClient,
     database_schema,
     date_property,
@@ -40,7 +41,7 @@ def row(page_id="abc", name="Physics lab", deadline="2026-09-05"):
         "url": f"https://notion.test/{page_id}",
         "properties": {
             "Name": text_prop("title", name),
-            "Area": select_prop("Personal"),
+            "Area": select_prop("School"),
             "Type": select_prop("Task"),
             "Cadence": select_prop(None),
             "Last touched": date_prop("2026-09-01"),
@@ -59,6 +60,16 @@ def test_property_payload_shapes_are_not_bare_strings() -> None:
     assert date_property(date(2026, 9, 1)) == {"date": {"start": "2026-09-01"}}
     assert work_properties({"Status": "Done"}) == {"Status": {"select": {"name": "Done"}}}
     assert database_schema()["Name"] == {"title": {}}
+    assert [option["name"] for option in database_schema()["Area"]["select"]["options"]] == AREAS
+
+
+def test_existing_database_area_options_can_be_synchronized() -> None:
+    http = FakeHttp([{"id": "db"}])
+    result = NotionClient("token", "db", http=http).update_work_database_areas()
+    assert result == {"id": "db"}
+    assert http.calls[0][0:2] == ("PATCH", "https://api.notion.com/v1/databases/db")
+    assert http.calls[0][2]["json"] == {"properties": {"Area": database_schema()["Area"]}}
+    assert http.calls[0][2]["idempotent"] is True
 
 
 def test_query_paginates_and_normalizes_by_page_id() -> None:
@@ -88,4 +99,3 @@ def test_blank_name_and_wrong_status_type_skip_only_bad_rows() -> None:
     snapshot = NotionClient("token", "db", http=http).get_active_work()
     assert [item.page_id for item in snapshot.items] == ["good"]
     assert snapshot.warnings
-

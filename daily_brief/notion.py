@@ -17,7 +17,7 @@ from .models import NotionWorkItem
 
 NOTION_API = "https://api.notion.com/v1"
 NOTION_VERSION = "2022-06-28"
-AREAS = ["MindSpark", "Biosensor", "GoDaddy", "AI Club", "College Apps", "Personal"]
+AREAS = ["Work", "School", "Connections", "Misc"]
 TYPES = ["Project", "Task", "Recurring"]
 CADENCES = ["Daily", "2x/week", "Weekly", "Biweekly", "None"]
 STATUSES = ["Active", "Paused", "Done"]
@@ -242,6 +242,14 @@ class NotionClient:
 
     def retrieve_database(self) -> dict[str, Any]:
         return self._json("GET", f"/databases/{self.work_db_id}")
+
+    def update_work_database_areas(self) -> dict[str, Any]:
+        return self._json(
+            "PATCH",
+            f"/databases/{self.work_db_id}",
+            payload={"properties": {"Area": database_schema()["Area"]}},
+            idempotent=True,
+        )
 
     def create_work_database(self) -> dict[str, Any]:
         payload = {

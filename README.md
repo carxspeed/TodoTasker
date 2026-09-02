@@ -143,7 +143,7 @@ If a bot token is ever exposed, revoke it with BotFather, generate a replacement
    venv\Scripts\python.exe setup_notion_db.py
    ```
 
-The helper creates or validates one database named **Work** below the parent page and writes its ID to `NOTION_WORK_DB_ID`. The database schema includes:
+The helper creates or validates one database named **Work** below the parent page, synchronizes its Area choices, and writes its ID to `NOTION_WORK_DB_ID`. The database schema includes:
 
 - `Name`;
 - `Area`;
@@ -154,6 +154,8 @@ The helper creates or validates one database named **Work** below the parent pag
 - `Next step`;
 - `Deadline`;
 - `Effort`.
+
+Use the `Area` field to organize manually managed tasks into **Work**, **School**, **Connections**, or **Misc**. Canvas assignments are collected automatically, so only add school tasks here when they are not represented in Canvas.
 
 Add three to five real active items to the Work database so the first brief has useful data. Keep each row's `Name`, `Status`, and `Next step` current.
 
