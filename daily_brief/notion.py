@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import re
+import hashlib
+import json
 from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
 from typing import Any, Iterable
 
+from .atomic import atomic_write_json
 from .http import HttpClient, HttpFailure
 from .models import NotionWorkItem
 
@@ -27,6 +31,13 @@ class NotionError(RuntimeError):
 @dataclass
 class WorkSnapshot:
     items: list[NotionWorkItem]
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class BriefPageResult:
+    page_id: str
+    url: str
     warnings: list[str] = field(default_factory=list)
 
 
@@ -134,7 +145,9 @@ class NotionClient:
             "Content-Type": "application/json",
         }
 
-    def _json(self, method: str, path: str, *, payload=None, idempotent=None) -> Any:
+    def _json(
+        self, method: str, path: str, *, payload=None, params=None, idempotent=None
+    ) -> Any:
         try:
             response = self.http.request_json(
                 method,
@@ -142,6 +155,7 @@ class NotionClient:
                 source="notion",
                 headers=self.headers,
                 json=payload,
+                params=params,
                 idempotent=idempotent,
             )
         except HttpFailure as exc:
@@ -256,3 +270,222 @@ class NotionClient:
             idempotent=False,
         )
 
+    def list_block_children(self, block_id: str) -> list[dict[str, Any]]:
+        children: list[dict[str, Any]] = []
+        cursor = None
+        while True:
+            params: dict[str, Any] = {"page_size": 100}
+            if cursor:
+                params["start_cursor"] = cursor
+            body = self._json(
+                "GET",
+                f"/blocks/{block_id}/children",
+                params=params,
+                idempotent=True,
+            )
+            children.extend(body.get("results") or [])
+            if not body.get("has_more"):
+                return children
+            cursor = body.get("next_cursor")
+            if not cursor:
+                raise NotionError("Notion children response has no next_cursor")
+
+    def find_brief_page(self, day: date) -> BriefPageResult | None:
+        title = f"Brief — {day.isoformat()}"
+        matches = [
+            child
+            for child in self.list_block_children(self.parent_page_id)
+            if child.get("type") == "child_page"
+            and (child.get("child_page") or {}).get("title") == title
+        ]
+        if not matches:
+            return None
+        matches.sort(key=lambda value: (value.get("created_time") or "", value.get("id") or ""))
+        chosen = matches[0]
+        warnings = []
+        if len(matches) > 1:
+            duplicate_ids = ", ".join(str(value.get("id")) for value in matches[1:])
+            warnings.append(f"Duplicate exact-title brief pages found and not modified: {duplicate_ids}")
+        return BriefPageResult(
+            page_id=str(chosen["id"]),
+            url=str(chosen.get("url") or f"https://www.notion.so/{chosen['id']}"),
+            warnings=warnings,
+        )
+
+    def _create_brief_page(self, day: date) -> BriefPageResult:
+        body = self._json(
+            "POST",
+            "/pages",
+            payload={
+                "parent": {"type": "page_id", "page_id": self.parent_page_id},
+                "properties": {
+                    "title": {
+                        "title": [
+                            {"text": {"content": f"Brief — {day.isoformat()}"}}
+                        ]
+                    }
+                },
+            },
+            idempotent=False,
+        )
+        return BriefPageResult(page_id=str(body["id"]), url=str(body.get("url") or ""))
+
+    @staticmethod
+    def _rich_text(content: str) -> list[dict[str, Any]]:
+        return [{"type": "text", "text": {"content": content}}]
+
+    @classmethod
+    def _markdown_blocks(cls, markdown: str) -> list[dict[str, Any]]:
+        blocks: list[dict[str, Any]] = []
+        for raw_line in markdown.splitlines():
+            line = raw_line.rstrip()
+            if not line:
+                continue
+            block_type = "paragraph"
+            content = line
+            if line.startswith("### "):
+                block_type, content = "heading_3", line[4:]
+            elif line.startswith("## "):
+                block_type, content = "heading_2", line[3:]
+            elif line.startswith("# "):
+                block_type, content = "heading_1", line[2:]
+            elif line.startswith("- "):
+                block_type, content = "bulleted_list_item", line[2:]
+            for start in range(0, max(1, len(content)), 2000):
+                fragment = content[start : start + 2000]
+                blocks.append(
+                    {
+                        "object": "block",
+                        "type": block_type,
+                        block_type: {"rich_text": cls._rich_text(fragment)},
+                    }
+                )
+        return blocks
+
+    @staticmethod
+    def _block_text(block: dict[str, Any]) -> str:
+        block_type = block.get("type")
+        parts = (block.get(block_type) or {}).get("rich_text") or []
+        return "".join(
+            str(part.get("plain_text") or (part.get("text") or {}).get("content") or "")
+            for part in parts
+        )
+
+    def _append_blocks(self, page_id: str, blocks: list[dict[str, Any]]) -> list[str]:
+        ids: list[str] = []
+        for start in range(0, len(blocks), 100):
+            body = self._json(
+                "PATCH",
+                f"/blocks/{page_id}/children",
+                payload={"children": blocks[start : start + 100]},
+                idempotent=False,
+            )
+            ids.extend(str(value["id"]) for value in body.get("results") or [] if value.get("id"))
+        return ids
+
+    def _archive_block(self, block_id: str) -> None:
+        self._json(
+            "PATCH",
+            f"/blocks/{block_id}",
+            payload={"archived": True},
+            idempotent=False,
+        )
+
+    def upsert_brief_page(
+        self,
+        day: date,
+        markdown_body: str,
+        *,
+        journal_dir: str | Path = "state/notion_updates",
+        stored_page_id: str | None = None,
+        stored_url: str = "",
+    ) -> BriefPageResult:
+        warnings: list[str] = []
+        if stored_page_id:
+            page = BriefPageResult(stored_page_id, stored_url)
+        else:
+            found = self.find_brief_page(day)
+            page = found or self._create_brief_page(day)
+            warnings.extend(page.warnings)
+        payload_hash = hashlib.sha256(markdown_body.encode("utf-8")).hexdigest()
+        start_marker = f"Generation {payload_hash} start"
+        end_marker = f"Generation {payload_hash} end"
+        journal_path = Path(journal_dir) / f"{day.isoformat()}.json"
+        existing = self.list_block_children(page.page_id)
+        existing_text = [self._block_text(block) for block in existing]
+        journal: dict[str, Any] | None = None
+        if journal_path.exists():
+            try:
+                candidate = json.loads(journal_path.read_text(encoding="utf-8"))
+                if candidate.get("page_id") == page.page_id and candidate.get("payload_hash") == payload_hash:
+                    journal = candidate
+            except (OSError, ValueError):
+                journal = None
+
+        if end_marker in existing_text:
+            old_ids = (journal or {}).get("old_block_ids", [])
+            for block_id in old_ids:
+                if block_id not in (journal or {}).get("new_block_ids", []):
+                    self._archive_block(block_id)
+            complete = journal or {
+                "page_id": page.page_id,
+                "payload_hash": payload_hash,
+                "old_block_ids": [],
+                "new_block_ids": [],
+            }
+            complete["phase"] = "complete"
+            atomic_write_json(journal_path, complete)
+            return BriefPageResult(page.page_id, page.url, warnings)
+
+        if start_marker in existing_text:
+            start_index = existing_text.index(start_marker)
+            for block in existing[start_index:]:
+                try:
+                    self._archive_block(str(block["id"]))
+                except Exception:
+                    pass
+            existing = existing[:start_index]
+
+        old_ids = [str(block["id"]) for block in existing if block.get("id")]
+        journal = {
+            "page_id": page.page_id,
+            "payload_hash": payload_hash,
+            "phase": "appending",
+            "old_block_ids": old_ids,
+            "new_block_ids": [],
+        }
+        atomic_write_json(journal_path, journal)
+        new_blocks = [
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": self._rich_text(start_marker)},
+            },
+            *self._markdown_blocks(markdown_body),
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": self._rich_text(end_marker)},
+            },
+        ]
+        try:
+            for start in range(0, len(new_blocks), 100):
+                new_ids = self._append_blocks(page.page_id, new_blocks[start : start + 100])
+                journal["new_block_ids"].extend(new_ids)
+                atomic_write_json(journal_path, journal)
+        except Exception:
+            journal["phase"] = "append_failed"
+            atomic_write_json(journal_path, journal)
+            for block_id in journal["new_block_ids"]:
+                try:
+                    self._archive_block(block_id)
+                except Exception:
+                    pass
+            raise
+        journal["phase"] = "new_complete"
+        atomic_write_json(journal_path, journal)
+        for block_id in old_ids:
+            self._archive_block(block_id)
+        journal["phase"] = "complete"
+        atomic_write_json(journal_path, journal)
+        return BriefPageResult(page.page_id, page.url, warnings)
