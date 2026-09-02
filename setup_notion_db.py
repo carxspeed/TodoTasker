@@ -6,25 +6,11 @@ from daily_brief.config import ConfigurationError, load_settings
 from daily_brief.notion import NotionClient, NotionError
 import sys
 from pathlib import Path
+from daily_brief.envfile import persist_env_value
 
 
 def persist_work_db_id(path: Path, database_id: str) -> None:
-    compact = database_id.replace("-", "")
-    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-    replacement = f"NOTION_WORK_DB_ID={compact}"
-    updated = []
-    replaced = False
-    for line in lines:
-        if line.startswith("NOTION_WORK_DB_ID="):
-            updated.append(replacement)
-            replaced = True
-        else:
-            updated.append(line)
-    if not replaced:
-        updated.append(replacement)
-    from daily_brief.atomic import atomic_write_text
-
-    atomic_write_text(path, "\n".join(updated).rstrip() + "\n")
+    persist_env_value(path, "NOTION_WORK_DB_ID", database_id.replace("-", ""))
 
 
 def main() -> int:

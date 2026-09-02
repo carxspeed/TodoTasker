@@ -30,6 +30,9 @@ venv\Scripts\python.exe brief.py prepare --fixture fixtures\sample_todo.json --t
 # Manual Canvas authentication; the user completes Microsoft SSO
 venv\Scripts\python.exe canvas.py login
 
+# After TELEGRAM_BOT_TOKEN is in .env and you have messaged the bot once
+venv\Scripts\python.exe setup_telegram.py
+
 # Live commands after `.env` is complete and each connection is verified
 venv\Scripts\python.exe checkin.py send --force
 venv\Scripts\python.exe checkin.py process --force
