@@ -8,6 +8,8 @@ import os
 import subprocess
 import threading
 import time
+import ctypes
+import uuid
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, TypeVar
@@ -173,7 +175,37 @@ def resolve_incident_dir(override: Path | None) -> Path:
         resolved = override.resolve()
         resolved.mkdir(parents=True, exist_ok=True)
         return resolved
-    desktop = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Desktop"
+    desktop = None
+    if os.name == "nt":
+        # FOLDERID_Desktop; this respects redirected/localized Desktop locations.
+        class GUID(ctypes.Structure):
+            _fields_ = [
+                ("Data1", ctypes.c_uint32),
+                ("Data2", ctypes.c_uint16),
+                ("Data3", ctypes.c_uint16),
+                ("Data4", ctypes.c_ubyte * 8),
+            ]
+
+        folder_id = GUID.from_buffer_copy(
+            uuid.UUID("B4BFCC3A-DB2C-424C-B029-7FE99A87C641").bytes_le
+        )
+        output = ctypes.c_wchar_p()
+        try:
+            result = ctypes.windll.shell32.SHGetKnownFolderPath(
+                ctypes.byref(folder_id), 0, None, ctypes.byref(output)
+            )
+            if result == 0 and output.value:
+                desktop = Path(output.value)
+        except (AttributeError, OSError):
+            desktop = None
+        finally:
+            if output.value:
+                try:
+                    ctypes.windll.ole32.CoTaskMemFree(output)
+                except (AttributeError, OSError):
+                    pass
+    if desktop is None:
+        desktop = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Desktop"
     desktop.mkdir(parents=True, exist_ok=True)
     return desktop
 
@@ -197,4 +229,3 @@ def alert_incident(directory: Path, text: str) -> tuple[bool, bool]:
     except (OSError, subprocess.SubprocessError):
         pass
     return file_ok, message_ok
-

@@ -488,7 +488,11 @@ def fetch_live(request, base_url: str, target_date: date, timezone_name: str) ->
     except CanvasError:
         planner_ok = False
         planner_items = []
-        todo_items = paginate(request.get, f"{base}/api/v1/users/self/todo")
+        try:
+            todo_items = paginate(request.get, f"{base}/api/v1/users/self/todo")
+        except CanvasError:
+            todo_items = []
+            warnings.append("Canvas /todo fallback also failed")
         source = "todo_fallback+missing"
         warnings.append("Canvas planner failed; /todo fallback was used")
     try:
@@ -498,7 +502,7 @@ def fetch_live(request, base_url: str, target_date: date, timezone_name: str) ->
         missing_items = []
         missing_ok = False
         warnings.append("Canvas missing-submissions component failed")
-    if not planner_ok and todo_items is None and not missing_ok:
+    if not planner_ok and not todo_items and not missing_ok:
         raise CanvasError("CANVAS_TEMPORARY_FAILURE", "every assignment source failed")
 
     try:
@@ -679,4 +683,3 @@ def fetch_live(request, base_url: str, target_date: date, timezone_name: str) ->
             announcements=announcement_status,
         ),
     )
-

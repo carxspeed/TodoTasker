@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from daily_brief.models import CalendarSnapshot
-from daily_brief.runtime import DeferredHealthyLock, HeartbeatLock, SourceCache
+from daily_brief.runtime import DeferredHealthyLock, HeartbeatLock, SourceCache, resolve_incident_dir
 
 
 def test_healthy_lock_defers_second_owner(tmp_path: Path) -> None:
@@ -52,4 +52,10 @@ def test_target_specific_cache_rejects_yesterday(tmp_path: Path) -> None:
         target_date=date(2026, 9, 2),
         require_target_match=True,
     ) is None
+
+
+def test_incident_override_is_resolved_and_created(tmp_path: Path) -> None:
+    target = tmp_path / "incidents"
+    assert resolve_incident_dir(target) == target.resolve()
+    assert target.is_dir()
 

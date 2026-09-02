@@ -137,6 +137,51 @@ class DailyBriefOrchestrator:
         try:
             canvas = provider.fetch_canvas(target_date)
             statuses["canvas"] = "live"
+            partial = (
+                canvas.source_status.planner_items == "failed"
+                or canvas.source_status.missing_submissions == "failed"
+                or canvas.source_status.courses == "failed"
+                or canvas.source_status.announcements != "ok"
+            )
+            prior = self.cache.load(
+                "canvas", CanvasEnvelope, target_date=target_date, require_target_match=True
+            ) if partial else None
+            if prior:
+                cached_canvas, cached_at = prior
+                assignments = {item.key: item for item in cached_canvas.assignments}
+                assignments.update({item.key: item for item in canvas.assignments})
+                updates: dict[str, Any] = {
+                    "assignments": sorted(
+                        assignments.values(),
+                        key=lambda item: (item.due_at is None, item.due_at, item.key),
+                    ),
+                    "data_warnings": [
+                        *canvas.data_warnings,
+                        f"Partial Canvas response retained compatible cached components from {cached_at.isoformat()}",
+                    ],
+                }
+                if canvas.source_status.courses == "failed":
+                    updates.update(
+                        planners=cached_canvas.planners,
+                        planner_events=cached_canvas.planner_events,
+                        planner_observations=cached_canvas.planner_observations,
+                    )
+                if canvas.source_status.announcements != "ok":
+                    announcements = {
+                        (item.course, item.title, item.posted_at): item
+                        for item in cached_canvas.announcements
+                    }
+                    announcements.update(
+                        {
+                            (item.course, item.title, item.posted_at): item
+                            for item in canvas.announcements
+                        }
+                    )
+                    updates["announcements"] = sorted(
+                        announcements.values(),
+                        key=lambda item: (item.posted_at, item.course, item.title),
+                    )
+                canvas = canvas.model_copy(update=updates)
             if write_cache:
                 self.cache.save("canvas", canvas, target_date=target_date)
         except Exception:
@@ -427,6 +472,7 @@ class DailyBriefOrchestrator:
         )
         status = "failed"
         success = False
+        uncertain = False
         if self.telegram is not None:
             if delivery.telegram_message_id and delivery.telegram_payload_hash == payload_hash:
                 status = "skipped"
@@ -440,12 +486,14 @@ class DailyBriefOrchestrator:
                 )
                 status = "edited" if result.success else "failed"
                 success = result.success
+                uncertain = result.uncertain
             else:
                 _, result = self.telegram.send_brief(
                     text, notion_url, local_path=brief_path
                 )
                 status = "sent" if result.success else "failed"
                 success = result.success
+                uncertain = result.uncertain
             if success:
                 if status != "skipped" and result.message_id is not None:
                     delivery.telegram_message_id = result.message_id
@@ -454,6 +502,8 @@ class DailyBriefOrchestrator:
             state.last_delivered = now
             state.consecutive_telegram_failures = 0
             state.warnings = []
+        elif uncertain:
+            status = "uncertain"
         else:
             state.consecutive_telegram_failures += 1
             if state.consecutive_telegram_failures >= 2:
@@ -486,4 +536,3 @@ class DailyBriefOrchestrator:
             f"No Telegram Daily Brief delivery is recorded for {target_date.isoformat()}.",
         )
         return True
-

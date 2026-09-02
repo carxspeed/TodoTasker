@@ -80,6 +80,14 @@ class Telegram:
         return build_summary(text, notion_url, local_path=local_path), TelegramResult(True, message_id)
 
 
+class UncertainTelegram(Telegram):
+    def send_brief(self, text, notion_url, *, local_path):
+        self.sent += 1
+        return build_summary(text, notion_url, local_path=local_path), TelegramResult(
+            False, error="transport", uncertain=True
+        )
+
+
 def make_orchestrator(tmp_path: Path, guidance=None, notion=None, telegram=None):
     settings = load_settings(tmp_path / "missing.env")
     store = StateStore(tmp_path / "state")
@@ -172,3 +180,33 @@ def test_changed_deadline_gets_updated_header_without_guidance_call(tmp_path: Pa
     assert "Changed canonical title" in text
     assert guidance.calls == 1
 
+
+def test_partial_canvas_response_retains_compatible_cached_assignments(tmp_path: Path) -> None:
+    orchestrator = make_orchestrator(tmp_path)
+    full = Provider()
+    orchestrator.fetch_sources(full, TARGET, write_cache=True)
+    partial = Provider()
+    partial.canvas = partial.canvas.model_copy(
+        update={
+            "assignments": [],
+            "source_status": partial.canvas.source_status.model_copy(
+                update={"planner_items": "failed"}
+            ),
+        }
+    )
+    bundle = orchestrator.fetch_sources(partial, TARGET, write_cache=False)
+    assert [item.key for item in bundle.canvas.assignments] == ["assignment:101"]
+    assert any("retained compatible cached" in value for value in bundle.canvas.data_warnings)
+
+
+def test_uncertain_telegram_transport_does_not_count_as_definite_failure(tmp_path: Path) -> None:
+    telegram = UncertainTelegram()
+    orchestrator = make_orchestrator(tmp_path, Guidance(), None, telegram)
+    provider = Provider()
+    _, status, state = orchestrator.deliver(
+        provider,
+        target_date=TARGET,
+        as_of=datetime(2026, 9, 2, 7, tzinfo=TZ),
+    )
+    assert status == "uncertain"
+    assert state.consecutive_telegram_failures == 0
