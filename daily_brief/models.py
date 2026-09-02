@@ -155,14 +155,20 @@ class ClassifiedItem(Contract):
     tier: Literal["must", "smart", "may"]
     effort: Literal["S", "M", "L"]
     effort_hours: float = Field(gt=0)
+    effort_source: Literal["points", "override", "notion"]
+    kind: str = ""
     due_at: AwareDatetime | None = None
     deadline: date | None = None
     course: str = ""
     description: str = ""
     next_step: str = ""
+    url: str = ""
     points: float | None = None
-    overdue_periods: int = 0
+    overdue_periods: float = Field(default=0, ge=0)
     promoted: bool = False
+    momentum: bool = False
+    submission_status: Literal["unsubmitted", "unknown"] | None = None
+    needs_confirmation: bool = False
 
 
 class Promotion(Contract):
@@ -318,4 +324,3 @@ class DailyBriefState(Contract):
         if len(compact) != 32 or any(ch not in "0123456789abcdefABCDEF" for ch in compact):
             raise ValueError("work_db_id must be a Notion id")
         return compact
-
