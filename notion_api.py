@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import sys
 
 from daily_brief.config import ConfigurationError, load_settings
 from daily_brief.notion import NotionClient, NotionError
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     try:
         settings = load_settings(required=("NOTION_TOKEN", "NOTION_WORK_DB_ID"))
         snapshot = NotionClient(
@@ -34,4 +37,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

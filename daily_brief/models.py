@@ -112,6 +112,13 @@ class NotionWorkItem(Contract):
     effort: Literal["S", "M", "L"] | None = None
 
 
+class NotionSnapshot(Contract):
+    schema_version: Literal[1] = 1
+    fetched_at: AwareDatetime
+    items: list[NotionWorkItem] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class CalendarEvent(Contract):
     title: str
     start: AwareDatetime

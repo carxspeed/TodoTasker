@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -31,6 +32,8 @@ def _profile_error(exc: Exception) -> CanvasError:
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     args = parse_args()
     try:
         settings = load_settings()
@@ -75,4 +78,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import date
 
 from daily_brief.calendar import CalendarSourceFailure, build_calendar_snapshot, fetch_ical
@@ -16,6 +17,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     args = parse_args()
     try:
         settings = load_settings(required=("ICAL_URL",))
@@ -37,4 +40,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

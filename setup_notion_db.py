@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from daily_brief.config import ConfigurationError, load_settings
 from daily_brief.notion import NotionClient, NotionError
+import sys
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     try:
         settings = load_settings(required=("NOTION_TOKEN", "NOTION_PARENT_PAGE_ID"))
         client = NotionClient(
@@ -29,4 +32,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
