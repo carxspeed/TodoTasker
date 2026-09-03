@@ -4,6 +4,7 @@ from datetime import date, datetime, timezone
 import pytest
 
 from daily_brief.guidance import (
+    CANVAS_INSTRUCTION_LIMIT,
     PROMPT_LIMIT,
     build_guidance_request,
     generate_guidance,
@@ -92,6 +93,19 @@ def test_large_request_is_bounded_without_dropping_retained_fields() -> None:
         assert retained["key"] and retained["name"] and retained["tier"] and retained["effort_hours"]
 
 
+def test_canvas_instructions_are_bounded_and_not_confused_with_notion_next_step() -> None:
+    request = build_guidance_request(
+        [task(1, description="Collect objects. " * 200)],
+        [],
+        TOTALS,
+        date(2026, 9, 2),
+    )
+    payload = request.user["DATA"]["guidance_input"][0]
+    assert "next_step" not in payload
+    assert payload["canvas_instructions"].startswith("Collect objects.")
+    assert len(payload["canvas_instructions"]) == CANVAS_INSTRUCTION_LIMIT
+
+
 def test_whole_response_validation_rejects_reordered_extra_and_missing_keys() -> None:
     request = build_guidance_request([task(1), task(2)], [], {**TOTALS, "selected_count": 2}, date(2026, 9, 2))
     with pytest.raises(ValueError, match="reordered"):
@@ -100,6 +114,20 @@ def test_whole_response_validation_rejects_reordered_extra_and_missing_keys() ->
         validate_guidance_text("prefix " + response_for(request.keys), request)
     with pytest.raises(Exception):
         validate_guidance_text(response_for(request.keys + ["extra"]), request)
+
+
+def test_canvas_unknown_guidance_is_rejected() -> None:
+    request = build_guidance_request([task(1)], [], TOTALS, date(2026, 9, 2))
+    response = json.dumps(
+        {
+            "overview": "",
+            "task_guidance": [
+                {"key": "assignment:1", "guidance": "Next step unknown — scope it."}
+            ],
+        }
+    )
+    with pytest.raises(ValueError, match="Canvas guidance"):
+        validate_guidance_text(response, request)
 
 
 def test_local_generation_makes_exactly_one_chat_call() -> None:
@@ -133,4 +161,3 @@ def test_free_window_boundaries_survive_budgeting() -> None:
     ]
     request = build_guidance_request([task(1, description="x" * 400)], windows, TOTALS, date(2026, 9, 2))
     assert request.user["DATA"]["free_windows"][0]["start"] == "2026-09-02T15:00:00Z"
-
