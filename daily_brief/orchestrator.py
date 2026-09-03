@@ -11,7 +11,12 @@ from zoneinfo import ZoneInfo
 
 from .atomic import atomic_write_json, atomic_write_text
 from .calendar import build_calendar_snapshot, fetch_ical
-from .canvas import fetch_live, load_fixture, open_saved_canvas_context
+from .canvas import (
+    exclude_course_assignments,
+    fetch_live,
+    load_fixture,
+    open_saved_canvas_context,
+)
 from .classifier import classify
 from .config import Settings
 from .guidance import generate_guidance
@@ -177,6 +182,9 @@ class DailyBriefOrchestrator:
                         key=lambda item: (item.posted_at, item.course, item.title),
                     )
                 canvas = canvas.model_copy(update=updates)
+            canvas = exclude_course_assignments(
+                canvas, self.settings.canvas_excluded_course_ids
+            )
             if write_cache:
                 self.cache.save("canvas", canvas, target_date=target_date)
         except Exception:
@@ -185,6 +193,9 @@ class DailyBriefOrchestrator:
             )
             if cached:
                 canvas, cached_at = cached
+                canvas = exclude_course_assignments(
+                    canvas, self.settings.canvas_excluded_course_ids
+                )
                 statuses["canvas"] = "cached"
                 warnings.append(f"Canvas is cached from {cached_at.isoformat()}")
             else:

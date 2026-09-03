@@ -62,6 +62,7 @@ class Settings(BaseModel):
     ollama_model: str = "qwen3:4b"
     ollama_base_url: HttpUrl = "http://localhost:11434"
     canvas_base: HttpUrl = "https://issaquah.instructure.com"
+    canvas_excluded_course_ids: list[int] = Field(default_factory=list)
     timezone: str = "America/Los_Angeles"
     school_hours: dict[str, list[TimeInterval]] = Field(default_factory=dict)
     fixed_busy_windows: dict[str, list[TimeInterval]] = Field(default_factory=dict)
@@ -178,8 +179,20 @@ def load_settings(
         values.get("INFORMATIONAL_ALL_DAY_PATTERNS_JSON", '["birthday"]'),
         list,
     )
+    excluded_course_ids = _parse_json(
+        "CANVAS_EXCLUDED_COURSE_IDS_JSON",
+        values.get("CANVAS_EXCLUDED_COURSE_IDS_JSON", "[]"),
+        list,
+    )
     if not all(isinstance(item, str) for item in [*no_school, *informational]):
         raise ConfigurationError("pattern JSON values must contain only strings")
+    if not all(
+        isinstance(item, int) and not isinstance(item, bool) and item > 0
+        for item in excluded_course_ids
+    ):
+        raise ConfigurationError(
+            "CANVAS_EXCLUDED_COURSE_IDS_JSON must contain only positive integers"
+        )
 
     incident_raw = str(values.get("INCIDENT_DIR", "")).strip()
     payload = {
@@ -198,6 +211,7 @@ def load_settings(
         "ollama_model": values.get("OLLAMA_MODEL", "qwen3:4b"),
         "ollama_base_url": values.get("OLLAMA_BASE_URL", "http://localhost:11434"),
         "canvas_base": values.get("CANVAS_BASE", "https://issaquah.instructure.com"),
+        "canvas_excluded_course_ids": excluded_course_ids,
         "timezone": values.get("TIMEZONE", "America/Los_Angeles"),
         "school_hours": _parse_schedule("SCHOOL_HOURS_JSON", school_raw),
         "fixed_busy_windows": _parse_schedule("FIXED_BUSY_WINDOWS_JSON", fixed_raw),

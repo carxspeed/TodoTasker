@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from daily_brief.canvas import (
     CanvasError,
+    exclude_course_assignments,
     fetch_live,
     load_fixture,
     open_saved_canvas_context,
@@ -46,7 +47,10 @@ def main() -> int:
         settings = load_settings()
         target_date = args.target_date if hasattr(args, "target_date") else None
         if args.command == "fetch" and args.fixture:
-            print(load_fixture(args.fixture).model_dump_json())
+            envelope = exclude_course_assignments(
+                load_fixture(args.fixture), settings.canvas_excluded_course_ids
+            )
+            print(envelope.model_dump_json())
             return 0
         from playwright.sync_api import sync_playwright
 
@@ -77,6 +81,9 @@ def main() -> int:
                         str(settings.canvas_base),
                         effective_date,
                         settings.timezone,
+                    )
+                    envelope = exclude_course_assignments(
+                        envelope, settings.canvas_excluded_course_ids
                     )
                     print(envelope.model_dump_json())
         return 0

@@ -6,6 +6,7 @@ import pytest
 from daily_brief.canvas import (
     CanvasError,
     canvas_storage_state_path,
+    exclude_course_assignments,
     load_fixture,
     normalize_assignment_sources,
     open_saved_canvas_context,
@@ -195,6 +196,16 @@ def test_missing_union_keeps_unknown_locked_item_in_verify_path() -> None:
     assert len(normalized.assignments) == 1
     assert normalized.assignments[0].submission_status == "unknown"
     assert normalized.assignments[0].needs_confirmation is True
+
+
+def test_excluded_course_removes_only_its_assignments() -> None:
+    envelope = load_fixture("fixtures/sample_todo.json")
+    filtered = exclude_course_assignments(envelope, [12])
+
+    assert filtered.assignments == []
+    assert filtered.canvas_events == envelope.canvas_events
+    assert filtered.planners == envelope.planners
+    assert envelope.assignments[0].course_id == 12
 
 
 def test_planner_windowing_is_structural_and_creates_quiz_event() -> None:

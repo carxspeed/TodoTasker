@@ -187,6 +187,16 @@ Confirm the Canvas site in `.env`. This repository defaults to:
 CANVAS_BASE=https://issaquah.instructure.com
 ```
 
+To exclude assignments from a specific Canvas course, add its numeric course ID.
+For example, a course URL ending in `/courses/46844` uses:
+
+```dotenv
+CANVAS_EXCLUDED_COURSE_IDS_JSON=[46844]
+```
+
+This filters assignments only; calendar events, planners, and announcements from
+the course remain available.
+
 Start the one-time interactive login:
 
 ```powershell

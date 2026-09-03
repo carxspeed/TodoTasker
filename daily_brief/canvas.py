@@ -48,6 +48,24 @@ class CanvasError(RuntimeError):
         super().__init__(f"{code}: {message}")
 
 
+def exclude_course_assignments(
+    envelope: CanvasEnvelope, excluded_course_ids: Iterable[int]
+) -> CanvasEnvelope:
+    """Remove assignments from explicitly excluded courses, leaving other course data intact."""
+
+    excluded = set(excluded_course_ids)
+    if not excluded:
+        return envelope
+    assignments = [
+        assignment
+        for assignment in envelope.assignments
+        if assignment.course_id not in excluded
+    ]
+    if len(assignments) == len(envelope.assignments):
+        return envelope
+    return envelope.model_copy(update={"assignments": assignments})
+
+
 def canvas_storage_state_path(profile: str | Path) -> Path:
     return Path(profile).resolve() / STORAGE_STATE_FILENAME
 

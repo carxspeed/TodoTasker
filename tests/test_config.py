@@ -17,6 +17,7 @@ def test_defaults_are_safe_and_timezone_is_valid(tmp_path: Path) -> None:
     assert settings.timezone == "America/Los_Angeles"
     assert settings.notion_token == ""
     assert settings.school_hours["mon"][0].start == "07:30"
+    assert settings.canvas_excluded_course_ids == []
 
 
 def test_required_values_are_command_specific(tmp_path: Path) -> None:
@@ -31,6 +32,11 @@ def test_required_values_are_command_specific(tmp_path: Path) -> None:
         ("SCHOOL_HOURS_JSON", '{"mon":[["7:30","14:30"]]}', "invalid interval"),
         ("FIXED_BUSY_WINDOWS_JSON", "[]", "must decode to dict"),
         ("NO_SCHOOL_PATTERNS_JSON", '[""]', "non-empty"),
+        (
+            "CANVAS_EXCLUDED_COURSE_IDS_JSON",
+            '["46844"]',
+            "positive integers",
+        ),
     ],
 )
 def test_malformed_json_configuration_fails_loudly(
@@ -57,3 +63,9 @@ def test_notion_ids_are_normalized(tmp_path: Path) -> None:
     assert settings.notion_parent_page_id == "0123456789abcdef0123456789abcdef"
     assert settings.notion_databases_configured
     assert set(settings.notion_database_ids) == {"Work", "School", "Connections", "Misc"}
+
+
+def test_canvas_course_exclusions_are_parsed(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    write_env(env, CANVAS_EXCLUDED_COURSE_IDS_JSON="[46844]")
+    assert load_settings(env).canvas_excluded_course_ids == [46844]
