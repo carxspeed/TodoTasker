@@ -8,7 +8,14 @@ from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from daily_brief.canvas import CanvasError, fetch_live, load_fixture, verify_session
+from daily_brief.canvas import (
+    CanvasError,
+    fetch_live,
+    load_fixture,
+    open_saved_canvas_context,
+    save_canvas_session,
+    verify_session,
+)
 from daily_brief.config import ConfigurationError, load_settings
 
 
@@ -44,20 +51,24 @@ def main() -> int:
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as playwright:
-            try:
-                context = playwright.chromium.launch_persistent_context(
-                    str(args.profile.resolve()), headless=args.command == "fetch"
-                )
-            except Exception as exc:
-                raise _profile_error(exc) from exc
-            try:
-                if args.command == "login":
+            if args.command == "login":
+                try:
+                    context = playwright.chromium.launch_persistent_context(
+                        str(args.profile.resolve()), headless=False
+                    )
+                except Exception as exc:
+                    raise _profile_error(exc) from exc
+                try:
                     context.pages[0].goto(str(settings.canvas_base))
                     print("Log in via Microsoft, then press Enter here")
                     input()
                     verify_session(context.request, str(settings.canvas_base))
-                    print("Canvas session verified. Close this command before scheduled fetches run.")
-                else:
+                    save_canvas_session(context, args.profile)
+                    print("Canvas session verified and saved.")
+                finally:
+                    context.close()
+            else:
+                with open_saved_canvas_context(playwright, args.profile) as context:
                     effective_date = target_date or datetime.now(
                         ZoneInfo(settings.timezone)
                     ).date()
@@ -68,8 +79,6 @@ def main() -> int:
                         settings.timezone,
                     )
                     print(envelope.model_dump_json())
-            finally:
-                context.close()
         return 0
     except (ConfigurationError, CanvasError) as exc:
         print(exc)

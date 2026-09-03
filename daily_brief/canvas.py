@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, time as wall_time, timedelta
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Iterator
 from zoneinfo import ZoneInfo
 
 import html2text
@@ -36,6 +38,7 @@ WEEKDAY_RE = re.compile(rf"\b{WEEKDAY}\b", re.IGNORECASE)
 REJECT_DATE_CONTEXT = re.compile(r"score|points|pts|out of|fraction|read|chapter|problem", re.I)
 PLANNER_TITLE_RE = re.compile(r"planner|week at a glance|agenda|schedule|calendar", re.I)
 ASSESSMENT_RE = re.compile(r"\b(?:quiz|test|exam|assessment)\b", re.I)
+STORAGE_STATE_FILENAME = "storage-state.json"
 
 
 class CanvasError(RuntimeError):
@@ -43,6 +46,46 @@ class CanvasError(RuntimeError):
         self.code = code
         self.exit_code = exit_code
         super().__init__(f"{code}: {message}")
+
+
+def canvas_storage_state_path(profile: str | Path) -> Path:
+    return Path(profile).resolve() / STORAGE_STATE_FILENAME
+
+
+def save_canvas_session(context, profile: str | Path) -> Path:
+    """Atomically save cookies and web storage after a verified interactive login."""
+    destination = canvas_storage_state_path(profile)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(".tmp")
+    try:
+        context.storage_state(path=str(temporary))
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return destination
+
+
+@contextmanager
+def open_saved_canvas_context(playwright, profile: str | Path) -> Iterator[Any]:
+    """Open a fresh headless context from the last verified login state."""
+    state_path = canvas_storage_state_path(profile)
+    if not state_path.exists():
+        raise CanvasError("SESSION_EXPIRED", "run canvas.py login", exit_code=2)
+    browser = None
+    try:
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(storage_state=str(state_path))
+    except Exception as exc:
+        if browser is not None:
+            browser.close()
+        raise CanvasError(
+            "CANVAS_BROWSER_ERROR", "could not restore the saved Canvas session"
+        ) from exc
+    try:
+        yield context
+    finally:
+        context.close()
+        browser.close()
 
 
 def _response_json(response, *, expected: type, session_check: bool = False) -> Any:
@@ -76,7 +119,18 @@ def _response_json(response, *, expected: type, session_check: bool = False) -> 
 
 
 def verify_session(request, base_url: str) -> dict[str, Any]:
-    response = request.get(f"{base_url.rstrip('/')}/api/v1/users/self", timeout=30_000)
+    try:
+        response = request.get(f"{base_url.rstrip('/')}/api/v1/users/self", timeout=30_000)
+    except Exception as exc:
+        if "closed" in str(exc).casefold():
+            raise CanvasError(
+                "CANVAS_BROWSER_CLOSED",
+                "keep the Canvas login browser open until verification finishes",
+                exit_code=2,
+            ) from exc
+        raise CanvasError(
+            "CANVAS_TEMPORARY_FAILURE", "could not verify the Canvas session"
+        ) from exc
     return _response_json(response, expected=dict, session_check=True)
 
 

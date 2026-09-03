@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 from .atomic import atomic_write_json, atomic_write_text
 from .calendar import build_calendar_snapshot, fetch_ical
-from .canvas import fetch_live, load_fixture
+from .canvas import fetch_live, load_fixture, open_saved_canvas_context
 from .classifier import classify
 from .config import Settings
 from .guidance import generate_guidance
@@ -64,18 +64,13 @@ class LiveSourceProvider:
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as playwright:
-            context = playwright.chromium.launch_persistent_context(
-                str(self.profile.resolve()), headless=True
-            )
-            try:
+            with open_saved_canvas_context(playwright, self.profile) as context:
                 return fetch_live(
                     context.request,
                     str(self.settings.canvas_base),
                     target_date,
                     self.settings.timezone,
                 )
-            finally:
-                context.close()
 
     def fetch_notion(self) -> NotionSnapshot:
         if not self.settings.notion_token or not self.settings.notion_databases_configured:

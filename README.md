@@ -195,7 +195,7 @@ venv\Scripts\python.exe canvas.py login
 
 Complete Microsoft SSO in the opened Chromium window. Return to PowerShell and press Enter when prompted, allow the script to finish saving the local profile, and close the browser cleanly.
 
-The saved Playwright browser profile is private and ignored by Git. If Canvas later reports an expired session, run the login command again. If it reports that the profile is already in use, close all Chromium windows opened by the tasker and retry.
+The saved Playwright browser profile and `profile\storage-state.json` contain sensitive session data and are ignored by Git. Protect them like `.env`. If Canvas later reports an expired session, run the login command again. If login reports that the profile is already in use, close all Chromium windows opened by the tasker and retry.
 
 ## 9. Verify each read-only connection
 

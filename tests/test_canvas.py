@@ -5,10 +5,13 @@ import pytest
 
 from daily_brief.canvas import (
     CanvasError,
+    canvas_storage_state_path,
     load_fixture,
     normalize_assignment_sources,
+    open_saved_canvas_context,
     paginate,
     planner_item_is_complete,
+    save_canvas_session,
     stable_identity,
     todo_submission_complete,
     verify_session,
@@ -27,6 +30,57 @@ class Response:
         if isinstance(self._body, Exception):
             raise self._body
         return self._body
+
+
+def test_verified_session_state_is_saved_and_restored_in_a_fresh_context(tmp_path: Path) -> None:
+    profile = tmp_path / "profile"
+
+    class LoginContext:
+        def storage_state(self, *, path):
+            Path(path).write_text('{"cookies":[],"origins":[]}', encoding="utf-8")
+
+    state_path = save_canvas_session(LoginContext(), profile)
+    assert state_path == canvas_storage_state_path(profile)
+    assert state_path.exists()
+    assert not state_path.with_suffix(".tmp").exists()
+
+    class Context:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    context = Context()
+
+    class Browser:
+        closed = False
+
+        def new_context(self, **kwargs):
+            assert kwargs == {"storage_state": str(state_path)}
+            return context
+
+        def close(self):
+            self.closed = True
+
+    browser = Browser()
+
+    class Chromium:
+        def launch(self, **kwargs):
+            assert kwargs == {"headless": True}
+            return browser
+
+    playwright = type("Playwright", (), {"chromium": Chromium()})()
+    with open_saved_canvas_context(playwright, profile) as restored:
+        assert restored is context
+    assert context.closed and browser.closed
+
+
+def test_missing_saved_session_requires_login(tmp_path: Path) -> None:
+    with pytest.raises(CanvasError) as missing:
+        with open_saved_canvas_context(object(), tmp_path / "profile"):
+            pass
+    assert missing.value.code == "SESSION_EXPIRED"
+    assert missing.value.exit_code == 2
 
 
 def test_normalized_fixture_round_trips() -> None:
@@ -93,6 +147,15 @@ def test_session_classification_is_precise() -> None:
     with pytest.raises(CanvasError) as temporary:
         verify_session(Request(Response(500, {})), "https://canvas.test")
     assert temporary.value.code == "CANVAS_TEMPORARY_FAILURE"
+
+    class ClosedRequest:
+        def get(self, *args, **kwargs):
+            raise RuntimeError("Target page, context or browser has been closed")
+
+    with pytest.raises(CanvasError) as closed:
+        verify_session(ClosedRequest(), "https://canvas.test")
+    assert closed.value.code == "CANVAS_BROWSER_CLOSED"
+    assert closed.value.exit_code == 2
 
 
 @pytest.mark.parametrize(
@@ -185,4 +248,3 @@ def test_title_matched_undated_page_is_diagnostic_only() -> None:
     assert result.planner is not None
     assert result.planner.dates == []
     assert result.events == []
-
