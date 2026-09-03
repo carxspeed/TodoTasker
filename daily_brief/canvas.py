@@ -77,6 +77,29 @@ def exclude_course_assignments(
     return envelope.model_copy(update={"assignments": assignments})
 
 
+def mark_overdue_on_paper_for_verification(
+    assignments: Iterable[CanvasAssignment], observed_at: datetime
+) -> list[CanvasAssignment]:
+    """Avoid claiming that ambiguous offline submissions are definitely unfinished."""
+
+    if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+        raise ValueError("observed_at must be timezone-aware")
+    marked: list[CanvasAssignment] = []
+    for assignment in assignments:
+        overdue_on_paper = (
+            "on_paper" in assignment.submission_types
+            and assignment.due_at is not None
+            and assignment.due_at <= observed_at
+            and assignment.submission_status == "unsubmitted"
+        )
+        if overdue_on_paper:
+            assignment = assignment.model_copy(
+                update={"submission_status": "unknown", "needs_confirmation": True}
+            )
+        marked.append(assignment)
+    return marked
+
+
 def assignment_collection_window(target_date: date) -> tuple[date, date]:
     """Include recent work as well as the existing two-week future horizon."""
 
@@ -354,6 +377,10 @@ def enrich_assignment_details(
                     "points": detail.get("points_possible", assignment.points),
                     "url": str(detail.get("html_url") or assignment.url),
                     "description": description or assignment.description,
+                    "submission_types": [
+                        str(value)
+                        for value in (detail.get("submission_types") or assignment.submission_types)
+                    ],
                 }
             )
         )
@@ -433,6 +460,7 @@ def normalize_task(
         points=plannable.get("points_possible"),
         url=str(item.get("html_url") or plannable.get("html_url") or ""),
         description=strip_html(str(plannable.get("description") or ""), 400),
+        submission_types=[str(value) for value in plannable.get("submission_types") or []],
         submission_status=submission_status,
         needs_confirmation=needs_confirmation,
     )
@@ -696,10 +724,12 @@ def fetch_live(
     timezone_name: str,
     *,
     excluded_course_ids: Iterable[int] = (),
+    observed_at: datetime | None = None,
 ) -> CanvasEnvelope:
     base = base_url.rstrip("/")
     verify_session(request, base)
     warnings: list[str] = []
+    observation_time = observed_at or utc_now()
     assignment_start, assignment_end = assignment_collection_window(target_date)
     try:
         planner_items = paginate(
@@ -787,6 +817,7 @@ def fetch_live(
         if assignment.course_id not in excluded
     ]
     assignments, detail_warnings = enrich_assignment_details(request, base, assignments)
+    assignments = mark_overdue_on_paper_for_verification(assignments, observation_time)
     warnings.extend(detail_warnings)
 
     planners: list[CanvasPlanner] = []

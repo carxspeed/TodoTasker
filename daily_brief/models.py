@@ -25,6 +25,7 @@ class CanvasAssignment(Contract):
     points: float | None = None
     url: str = ""
     description: str = Field(default="", max_length=2000)
+    submission_types: list[str] = Field(default_factory=list)
     submission_status: Literal["unsubmitted", "unknown"]
     needs_confirmation: bool = False
 

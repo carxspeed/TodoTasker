@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from zipfile import ZipFile
@@ -13,6 +13,7 @@ from daily_brief.canvas import (
     exclude_course_assignments,
     extract_document_text,
     load_fixture,
+    mark_overdue_on_paper_for_verification,
     normalize_assignment_sources,
     open_saved_canvas_context,
     paginate,
@@ -309,6 +310,39 @@ def test_excluded_course_removes_only_its_assignments() -> None:
     assert filtered.canvas_events == envelope.canvas_events
     assert filtered.planners == envelope.planners
     assert envelope.assignments[0].course_id == 12
+
+
+def test_only_overdue_on_paper_assignments_require_verification() -> None:
+    observed = datetime(2026, 9, 4, tzinfo=timezone.utc)
+    base = load_fixture("fixtures/sample_todo.json").assignments[0]
+    paper = base.model_copy(
+        update={
+            "key": "assignment:paper",
+            "due_at": datetime(2026, 9, 3, tzinfo=timezone.utc),
+            "submission_types": ["on_paper"],
+        }
+    )
+    online = base.model_copy(
+        update={
+            "key": "assignment:online",
+            "due_at": datetime(2026, 9, 3, tzinfo=timezone.utc),
+            "submission_types": ["online_upload"],
+        }
+    )
+    future_paper = paper.model_copy(
+        update={
+            "key": "assignment:future",
+            "due_at": datetime(2026, 9, 5, tzinfo=timezone.utc),
+        }
+    )
+
+    marked = mark_overdue_on_paper_for_verification(
+        [paper, online, future_paper], observed
+    )
+    assert marked[0].submission_status == "unknown"
+    assert marked[0].needs_confirmation is True
+    assert marked[1].submission_status == "unsubmitted"
+    assert marked[2].submission_status == "unsubmitted"
 
 
 def test_planner_windowing_is_structural_and_creates_quiz_event() -> None:
