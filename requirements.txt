@@ -3,10 +3,10 @@ html2text>=2024.2.26
 icalendar>=6,<7
 jsonschema>=4.23,<5
 playwright>=1.50,<2
+pypdf>=5,<7
 pydantic>=2.10,<3
 python-dotenv>=1.0,<2
 rapidfuzz>=3.10,<4
 recurring-ical-events>=3.4,<4
 requests>=2.32,<3
 tzdata>=2025.1
-

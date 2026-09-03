@@ -16,7 +16,7 @@ This repository implements the daily-brief design supplied with the project. The
 
 ## Sources and outputs
 
-The system reads incomplete Canvas planner items plus missing submissions, active rows from the Notion Work, School, Connections, and Misc databases, and a bounded iCalendar window. It normalizes those sources, assigns stable identities, and deterministically classifies work into Must, Smart, May, and Verify views. A bounded language-model request may add one-sentence guidance but cannot select, omit, reorder, rename, or re-estimate tasks.
+The system reads incomplete Canvas planner items plus missing submissions, enriches collected assignments from their detail pages and small linked DOCX/text-based PDF instructions, reads active rows from the Notion Work, School, Connections, and Misc databases, and reads a bounded iCalendar window. It normalizes those sources, assigns stable identities, and deterministically classifies work into Must, Smart, May, and Verify views. A bounded language-model request may add one-sentence guidance but cannot select, omit, reorder, rename, or re-estimate tasks.
 
 The rendered brief is saved locally before delivery, then upserted into a system-owned Notion page and sent as a boundary-safe Telegram summary. The evening check-in polls Telegram, applies conservatively matched updates through a replayable journal, and records next-day capacity only when the user states it.
 

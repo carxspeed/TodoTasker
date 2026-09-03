@@ -201,6 +201,11 @@ Assignment collection covers the 14 days before the brief date as well as the
 following 14 days. This keeps work due on the preparation evening and recent
 on-paper assignments from falling between Canvas endpoints.
 
+For collected assignments, the tasker also loads the full Canvas assignment page.
+Small DOCX and text-based PDF instruction files linked from the description are
+read locally and supplied to Ollama as bounded guidance context. Files larger than
+5 MB, unsupported formats, and scanned PDFs are skipped with a visible warning.
+
 Start the one-time interactive login:
 
 ```powershell

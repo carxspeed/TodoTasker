@@ -6,15 +6,20 @@ import json
 import os
 import re
 import time
+import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, time as wall_time, timedelta
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
+from urllib.parse import urlparse
+from zipfile import BadZipFile, ZipFile
 from zoneinfo import ZoneInfo
 
 import html2text
 from bs4 import BeautifulSoup
+from pypdf import PdfReader
 
 from .models import (
     Announcement,
@@ -40,6 +45,11 @@ PLANNER_TITLE_RE = re.compile(r"planner|week at a glance|agenda|schedule|calenda
 ASSESSMENT_RE = re.compile(r"\b(?:quiz|test|exam|assessment)\b", re.I)
 STORAGE_STATE_FILENAME = "storage-state.json"
 ASSIGNMENT_LOOKBACK_DAYS = 14
+ASSIGNMENT_DESCRIPTION_LIMIT = 2000
+ATTACHMENT_TEXT_LIMIT = 1600
+MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
+MAX_ATTACHMENTS_PER_ASSIGNMENT = 3
+MAX_PDF_PAGES = 12
 
 
 class CanvasError(RuntimeError):
@@ -219,6 +229,135 @@ def strip_html(value: str, limit: int) -> str:
     converter.body_width = 0
     text = re.sub(r"\s+", " ", converter.handle(value or "")).strip()
     return text if len(text) <= limit else text[: limit - 3].rstrip() + "..."
+
+
+def _bounded_text(value: str, limit: int) -> str:
+    text = re.sub(r"\s+", " ", value).strip()
+    return text if len(text) <= limit else text[: limit - 3].rstrip() + "..."
+
+
+def extract_document_text(
+    payload: bytes, filename: str, content_type: str = ""
+) -> str:
+    """Extract bounded text from a small DOCX or text-based PDF attachment."""
+
+    lowered_name = filename.casefold()
+    lowered_type = content_type.casefold()
+    if lowered_name.endswith(".docx") or "wordprocessingml.document" in lowered_type:
+        try:
+            with ZipFile(BytesIO(payload)) as archive:
+                info = archive.getinfo("word/document.xml")
+                if info.file_size > MAX_ATTACHMENT_BYTES:
+                    return ""
+                root = ET.fromstring(archive.read(info))
+        except (BadZipFile, KeyError, ET.ParseError, OSError):
+            return ""
+        return _bounded_text(
+            " ".join(node.text or "" for node in root.iter() if node.tag.endswith("}t")),
+            ATTACHMENT_TEXT_LIMIT,
+        )
+    if lowered_name.endswith(".pdf") or lowered_type == "application/pdf":
+        try:
+            reader = PdfReader(BytesIO(payload), strict=False)
+            text = " ".join(
+                page.extract_text() or "" for page in reader.pages[:MAX_PDF_PAGES]
+            )
+        except Exception:
+            return ""
+        return _bounded_text(text, ATTACHMENT_TEXT_LIMIT)
+    return ""
+
+
+def _attachment_ids(detail: dict[str, Any], description_html: str) -> list[int]:
+    ids: list[int] = []
+    for link in BeautifulSoup(description_html, "html.parser").find_all("a", href=True):
+        match = re.search(r"/files/(\d+)", str(link.get("href") or ""))
+        if match:
+            ids.append(int(match.group(1)))
+    attachments = detail.get("attachments")
+    if isinstance(attachments, list):
+        ids.extend(
+            int(item["id"])
+            for item in attachments
+            if isinstance(item, dict) and str(item.get("id", "")).isdigit()
+        )
+    return list(dict.fromkeys(ids))[:MAX_ATTACHMENTS_PER_ASSIGNMENT]
+
+
+def _download_attachment_text(request, base: str, file_id: int) -> tuple[str, str]:
+    metadata = _get_object(request, f"{base}/api/v1/files/{file_id}")
+    filename = str(metadata.get("display_name") or metadata.get("filename") or f"file-{file_id}")
+    content_type = str(metadata.get("content-type") or metadata.get("content_type") or "")
+    supported = (
+        filename.casefold().endswith((".docx", ".pdf"))
+        or "wordprocessingml.document" in content_type.casefold()
+        or content_type.casefold() == "application/pdf"
+    )
+    if not supported:
+        return filename, ""
+    size = metadata.get("size")
+    if isinstance(size, (int, float)) and size > MAX_ATTACHMENT_BYTES:
+        raise ValueError("attachment exceeds the 5 MB extraction limit")
+    download_url = str(metadata.get("url") or "")
+    if urlparse(download_url).scheme not in {"http", "https"}:
+        raise ValueError("attachment has no safe download URL")
+    response = request.get(download_url, timeout=30_000)
+    if int(response.status) >= 400:
+        raise ValueError(f"attachment download returned HTTP {response.status}")
+    payload = response.body()
+    if len(payload) > MAX_ATTACHMENT_BYTES:
+        raise ValueError("attachment exceeds the 5 MB extraction limit")
+    return filename, extract_document_text(payload, filename, content_type)
+
+
+def enrich_assignment_details(
+    request, base_url: str, assignments: Iterable[CanvasAssignment]
+) -> tuple[list[CanvasAssignment], list[str]]:
+    """Fetch canonical assignment descriptions and bounded attachment instructions."""
+
+    base = base_url.rstrip("/")
+    enriched: list[CanvasAssignment] = []
+    warnings: list[str] = []
+    for assignment in assignments:
+        if assignment.assignment_id is None:
+            enriched.append(assignment)
+            continue
+        try:
+            detail = _get_object(
+                request,
+                f"{base}/api/v1/courses/{assignment.course_id}/assignments/{assignment.assignment_id}",
+            )
+        except CanvasError:
+            warnings.append(f"Could not load full Canvas instructions for {assignment.name}")
+            enriched.append(assignment)
+            continue
+        description_html = str(detail.get("description") or "")
+        parts = [strip_html(description_html, ASSIGNMENT_DESCRIPTION_LIMIT)]
+        for file_id in _attachment_ids(detail, description_html):
+            try:
+                filename, text = _download_attachment_text(request, base, file_id)
+            except (CanvasError, ValueError, OSError):
+                warnings.append(f"Could not read Canvas attachment for {assignment.name}")
+                continue
+            if text:
+                parts.append(f"Attachment {filename}: {text}")
+            elif filename.casefold().endswith((".docx", ".pdf")):
+                warnings.append(f"Canvas attachment has no extractable text for {assignment.name}")
+        description = _bounded_text(
+            " ".join(part for part in parts if part), ASSIGNMENT_DESCRIPTION_LIMIT
+        )
+        enriched.append(
+            assignment.model_copy(
+                update={
+                    "name": str(detail.get("name") or assignment.name)[:500],
+                    "due_at": _aware_or_none(detail.get("due_at")) or assignment.due_at,
+                    "points": detail.get("points_possible", assignment.points),
+                    "url": str(detail.get("html_url") or assignment.url),
+                    "description": description or assignment.description,
+                }
+            )
+        )
+    return enriched, warnings
 
 
 def stable_identity(item: dict[str, Any]) -> tuple[str, str, int | str, int | None]:
@@ -550,7 +689,14 @@ def _get_object(request, url: str, params: dict[str, Any] | None = None) -> dict
     return _response_json(response, expected=dict)
 
 
-def fetch_live(request, base_url: str, target_date: date, timezone_name: str) -> CanvasEnvelope:
+def fetch_live(
+    request,
+    base_url: str,
+    target_date: date,
+    timezone_name: str,
+    *,
+    excluded_course_ids: Iterable[int] = (),
+) -> CanvasEnvelope:
     base = base_url.rstrip("/")
     verify_session(request, base)
     warnings: list[str] = []
@@ -634,6 +780,14 @@ def fetch_live(request, base_url: str, target_date: date, timezone_name: str) ->
         timezone_name=timezone_name,
     )
     warnings.extend(normalized.warnings)
+    excluded = set(excluded_course_ids)
+    assignments = [
+        assignment
+        for assignment in normalized.assignments
+        if assignment.course_id not in excluded
+    ]
+    assignments, detail_warnings = enrich_assignment_details(request, base, assignments)
+    warnings.extend(detail_warnings)
 
     planners: list[CanvasPlanner] = []
     planner_events: list[PlannerEvent] = []
@@ -751,7 +905,7 @@ def fetch_live(request, base_url: str, target_date: date, timezone_name: str) ->
     return CanvasEnvelope(
         fetched_at=utc_now(),
         source=source,
-        assignments=normalized.assignments,
+        assignments=assignments,
         canvas_events=normalized.events,
         canvas_reminders=normalized.reminders,
         planners=planners,

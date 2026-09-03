@@ -1,5 +1,7 @@
 from datetime import date
+from io import BytesIO
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
 
@@ -7,7 +9,9 @@ from daily_brief.canvas import (
     CanvasError,
     assignment_collection_window,
     canvas_storage_state_path,
+    enrich_assignment_details,
     exclude_course_assignments,
+    extract_document_text,
     load_fixture,
     normalize_assignment_sources,
     open_saved_canvas_context,
@@ -19,6 +23,7 @@ from daily_brief.canvas import (
     verify_session,
     window_planner_html,
 )
+from daily_brief.models import CanvasAssignment
 
 
 class Response:
@@ -32,6 +37,19 @@ class Response:
         if isinstance(self._body, Exception):
             raise self._body
         return self._body
+
+
+def docx_bytes(text: str) -> bytes:
+    output = BytesIO()
+    with ZipFile(output, "w") as archive:
+        archive.writestr(
+            "word/document.xml",
+            (
+                '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                f"<w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>"
+            ),
+        )
+    return output.getvalue()
 
 
 def test_verified_session_state_is_saved_and_restored_in_a_fresh_context(tmp_path: Path) -> None:
@@ -97,6 +115,83 @@ def test_assignment_window_includes_recent_and_future_work() -> None:
         date(2026, 8, 21),
         date(2026, 9, 18),
     )
+
+
+def test_document_text_extraction_supports_docx_and_pdf(monkeypatch) -> None:
+    assert extract_document_text(docx_bytes("Measure one million units."), "lab.docx") == (
+        "Measure one million units."
+    )
+
+    class Page:
+        def __init__(self, text):
+            self.text = text
+
+        def extract_text(self):
+            return self.text
+
+    class Reader:
+        def __init__(self, *args, **kwargs):
+            self.pages = [Page("Read the rubric."), Page("Submit the chart.")]
+
+    monkeypatch.setattr("daily_brief.canvas.PdfReader", Reader)
+    assert extract_document_text(b"pdf", "rubric.pdf") == "Read the rubric. Submit the chart."
+
+
+def test_assignment_details_include_linked_docx_instructions() -> None:
+    assignment = CanvasAssignment(
+        key="assignment:7",
+        source_key="assignment:7",
+        object_id=7,
+        assignment_id=7,
+        course_id=2,
+        name="Lab",
+        course="Physics",
+        kind="assignment",
+        due_at="2026-09-05T04:00:00Z",
+        submission_status="unsubmitted",
+    )
+    document = docx_bytes("Graph the measurements and answer the conclusion questions.")
+
+    class BinaryResponse:
+        status = 200
+
+        def body(self):
+            return document
+
+    class Request:
+        def get(self, url, **kwargs):
+            if url.endswith("/courses/2/assignments/7"):
+                return Response(
+                    200,
+                    {
+                        "id": 7,
+                        "name": "Lab: Millions",
+                        "due_at": "2026-09-05T04:00:00Z",
+                        "points_possible": 20,
+                        "html_url": "https://canvas.test/courses/2/assignments/7",
+                        "description": '<p>Follow the lab sheet.</p><a href="https://canvas.test/courses/2/files/99?wrap=1">Lab.docx</a>',
+                    },
+                )
+            if url.endswith("/api/v1/files/99"):
+                return Response(
+                    200,
+                    {
+                        "id": 99,
+                        "display_name": "Lab.docx",
+                        "content-type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        "size": len(document),
+                        "url": "https://download.test/lab.docx",
+                    },
+                )
+            if url == "https://download.test/lab.docx":
+                return BinaryResponse()
+            raise AssertionError(url)
+
+    enriched, warnings = enrich_assignment_details(Request(), "https://canvas.test", [assignment])
+    assert warnings == []
+    assert enriched[0].name == "Lab: Millions"
+    assert "Follow the lab sheet" in enriched[0].description
+    assert "Graph the measurements" in enriched[0].description
 
 
 def test_pagination_follows_opaque_next_url_and_only_initial_params() -> None:

@@ -75,6 +75,7 @@ class LiveSourceProvider:
                     str(self.settings.canvas_base),
                     target_date,
                     self.settings.timezone,
+                    excluded_course_ids=self.settings.canvas_excluded_course_ids,
                 )
 
     def fetch_notion(self) -> NotionSnapshot:

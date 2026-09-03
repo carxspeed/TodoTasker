@@ -81,6 +81,7 @@ def main() -> int:
                         str(settings.canvas_base),
                         effective_date,
                         settings.timezone,
+                        excluded_course_ids=settings.canvas_excluded_course_ids,
                     )
                     envelope = exclude_course_assignments(
                         envelope, settings.canvas_excluded_course_ids
