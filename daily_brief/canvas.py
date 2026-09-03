@@ -39,6 +39,7 @@ REJECT_DATE_CONTEXT = re.compile(r"score|points|pts|out of|fraction|read|chapter
 PLANNER_TITLE_RE = re.compile(r"planner|week at a glance|agenda|schedule|calendar", re.I)
 ASSESSMENT_RE = re.compile(r"\b(?:quiz|test|exam|assessment)\b", re.I)
 STORAGE_STATE_FILENAME = "storage-state.json"
+ASSIGNMENT_LOOKBACK_DAYS = 14
 
 
 class CanvasError(RuntimeError):
@@ -64,6 +65,15 @@ def exclude_course_assignments(
     if len(assignments) == len(envelope.assignments):
         return envelope
     return envelope.model_copy(update={"assignments": assignments})
+
+
+def assignment_collection_window(target_date: date) -> tuple[date, date]:
+    """Include recent work as well as the existing two-week future horizon."""
+
+    return (
+        target_date - timedelta(days=ASSIGNMENT_LOOKBACK_DAYS),
+        target_date + timedelta(days=14),
+    )
 
 
 def canvas_storage_state_path(profile: str | Path) -> Path:
@@ -544,13 +554,14 @@ def fetch_live(request, base_url: str, target_date: date, timezone_name: str) ->
     base = base_url.rstrip("/")
     verify_session(request, base)
     warnings: list[str] = []
+    assignment_start, assignment_end = assignment_collection_window(target_date)
     try:
         planner_items = paginate(
             request.get,
             f"{base}/api/v1/planner/items",
             {
-                "start_date": target_date.isoformat(),
-                "end_date": (target_date + timedelta(days=14)).isoformat(),
+                "start_date": assignment_start.isoformat(),
+                "end_date": assignment_end.isoformat(),
                 "filter": "incomplete_items",
             },
         )

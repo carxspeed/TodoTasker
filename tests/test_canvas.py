@@ -5,6 +5,7 @@ import pytest
 
 from daily_brief.canvas import (
     CanvasError,
+    assignment_collection_window,
     canvas_storage_state_path,
     exclude_course_assignments,
     load_fixture,
@@ -89,6 +90,13 @@ def test_normalized_fixture_round_trips() -> None:
     assert fixture.source == "fixture"
     assert fixture.assignments[0].key == "assignment:101"
     assert "secure_params" not in fixture.model_dump_json()
+
+
+def test_assignment_window_includes_recent_and_future_work() -> None:
+    assert assignment_collection_window(date(2026, 9, 4)) == (
+        date(2026, 8, 21),
+        date(2026, 9, 18),
+    )
 
 
 def test_pagination_follows_opaque_next_url_and_only_initial_params() -> None:

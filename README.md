@@ -197,6 +197,10 @@ CANVAS_EXCLUDED_COURSE_IDS_JSON=[46844]
 This filters assignments only; calendar events, planners, and announcements from
 the course remain available.
 
+Assignment collection covers the 14 days before the brief date as well as the
+following 14 days. This keeps work due on the preparation evening and recent
+on-paper assignments from falling between Canvas endpoints.
+
 Start the one-time interactive login:
 
 ```powershell
