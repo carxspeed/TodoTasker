@@ -68,7 +68,7 @@ Install Ollama, start it, and check which models are available:
 ollama list
 ```
 
-The included `.env.example` uses `qwen36:latest`, which was the model installed on the original machine. On another computer, download a model with `ollama pull <model-name>` and set `OLLAMA_MODEL` in `.env` to the exact name shown by `ollama list`.
+The included `.env.example` uses `qwen3:4b`, a relatively small model suitable for broad hardware compatibility. Download it with `ollama pull qwen3:4b`, or choose another official model and set `OLLAMA_MODEL` in `.env` to the exact name shown by `ollama list`.
 
 Ollama normally serves its local API at `http://localhost:11434`. Evening check-in interpretation always stays local. If the morning guidance model is unavailable, the brief still uses deterministic fallback guidance.
 

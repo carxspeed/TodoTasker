@@ -59,7 +59,7 @@ class Settings(BaseModel):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
     model_provider: Literal["local", "anthropic"] = "local"
-    ollama_model: str = "qwen36:latest"
+    ollama_model: str = "qwen3:4b"
     ollama_base_url: HttpUrl = "http://localhost:11434"
     canvas_base: HttpUrl = "https://issaquah.instructure.com"
     timezone: str = "America/Los_Angeles"
@@ -195,7 +195,7 @@ def load_settings(
         "anthropic_api_key": values.get("ANTHROPIC_API_KEY", ""),
         "anthropic_model": values.get("ANTHROPIC_MODEL", "claude-sonnet-5"),
         "model_provider": values.get("MODEL_PROVIDER", "local"),
-        "ollama_model": values.get("OLLAMA_MODEL", "qwen36:latest"),
+        "ollama_model": values.get("OLLAMA_MODEL", "qwen3:4b"),
         "ollama_base_url": values.get("OLLAMA_BASE_URL", "http://localhost:11434"),
         "canvas_base": values.get("CANVAS_BASE", "https://issaquah.instructure.com"),
         "timezone": values.get("TIMEZONE", "America/Los_Angeles"),

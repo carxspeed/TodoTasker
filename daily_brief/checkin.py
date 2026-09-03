@@ -123,7 +123,7 @@ def extract_checkin_local(
     local_today: date,
     checkin_sent_for: date,
     timezone_name: str,
-    model: str = "qwen36:latest",
+    model: str = "qwen3:4b",
     ollama_base_url: str = "http://localhost:11434",
     session=None,
 ) -> CheckinExtraction | None:

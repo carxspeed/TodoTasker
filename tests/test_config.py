@@ -13,6 +13,7 @@ def write_env(path: Path, **values: str) -> None:
 def test_defaults_are_safe_and_timezone_is_valid(tmp_path: Path) -> None:
     settings = load_settings(tmp_path / "missing.env")
     assert settings.model_provider == "local"
+    assert settings.ollama_model == "qwen3:4b"
     assert settings.timezone == "America/Los_Angeles"
     assert settings.notion_token == ""
     assert settings.school_hours["mon"][0].start == "07:30"

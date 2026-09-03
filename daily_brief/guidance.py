@@ -227,7 +227,7 @@ def generate_guidance(
     target_date: date,
     *,
     provider: Literal["local", "anthropic"] = "local",
-    model: str = "qwen36:latest",
+    model: str = "qwen3:4b",
     ollama_base_url: str = "http://localhost:11434",
     anthropic_api_key: str = "",
     session=None,
@@ -247,4 +247,3 @@ def generate_guidance(
         return validate_guidance_text(text, request)
     except (LLMUnavailable, KeyError, IndexError, TypeError, ValueError, ValidationError, jsonschema.ValidationError):
         return None
-
