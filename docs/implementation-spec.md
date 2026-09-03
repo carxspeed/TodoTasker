@@ -20,6 +20,8 @@ The system reads incomplete Canvas planner items plus missing submissions, enric
 
 Recent overdue Canvas assignments whose submission mode is `on_paper` are treated as unknown and routed to Verify, because Canvas can retain `unsubmitted` after offline work has been handed in.
 
+Rendered Canvas tasks include their course name, and aware assignment deadlines are converted to the configured local timezone before display.
+
 The rendered brief is saved locally before delivery, then upserted into a system-owned Notion page and sent as a boundary-safe Telegram summary. The evening check-in polls Telegram, applies conservatively matched updates through a replayable journal, and records next-day capacity only when the user states it.
 
 ## Operational commands

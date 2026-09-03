@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta, tzinfo
 
 from .models import CalendarSnapshot, CanvasEnvelope, ClassificationOutput, ClassifiedItem, GuidanceResult
 
@@ -16,17 +16,25 @@ def deterministic_guidance(item: ClassifiedItem) -> str:
     return "Open the assignment, review the requirements, and complete the first concrete part."
 
 
-def _render_task(item: ClassifiedItem, guidance: dict[str, str]) -> list[str]:
+def _format_due(value: datetime | None, display_timezone: tzinfo) -> str:
+    if value is None:
+        return "unknown deadline"
+    local = value.astimezone(display_timezone)
+    zone = local.tzname() or "local"
+    return f"{local.strftime('%a %b')} {local.day}, {local.strftime('%H:%M')} {zone}"
+
+
+def _render_task(
+    item: ClassifiedItem, guidance: dict[str, str], display_timezone: tzinfo
+) -> list[str]:
     due = ""
     if item.due_at is not None:
-        due = (
-            f" — due {item.due_at.strftime('%a %b')} "
-            f"{item.due_at.day}, {item.due_at.strftime('%H:%M')}"
-        )
-    return [
-        f"- {item.name} (~{item.effort_hours:g}h){due}",
-        f"  {guidance.get(item.key) or deterministic_guidance(item)}",
-    ]
+        due = f" — due {_format_due(item.due_at, display_timezone)}"
+    lines = [f"- {item.name} (~{item.effort_hours:g}h){due}"]
+    if item.source == "canvas" and item.course:
+        lines.append(f"  Course: {item.course}")
+    lines.append(f"  {guidance.get(item.key) or deterministic_guidance(item)}")
+    return lines
 
 
 def render_brief(
@@ -38,6 +46,8 @@ def render_brief(
     warnings: list[str] | None = None,
     updated: bool = False,
 ) -> str:
+    display_timezone = classification.as_of.tzinfo
+    assert display_timezone is not None
     lines = [
         f"Daily Brief — {classification.target_date.isoformat()}",
         "Updated this morning" if updated else "Prepared for your day",
@@ -49,7 +59,7 @@ def render_brief(
     if classification.verify:
         lines.extend(["", "Verify urgently"])
         for item in classification.verify:
-            due = item.due_at.isoformat() if item.due_at else "unknown deadline"
+            due = _format_due(item.due_at, display_timezone)
             lines.append(f"- {item.name} ({item.course}; {due}) {item.url}".rstrip())
     guidance_by_key = {
         item.key: item.guidance for item in guidance.task_guidance
@@ -64,7 +74,7 @@ def render_brief(
         if items:
             lines.extend(["", title])
             for item in items:
-                lines.extend(_render_task(item, guidance_by_key))
+                lines.extend(_render_task(item, guidance_by_key, display_timezone))
     if classification.momentum_deferred:
         item = classification.momentum_deferred
         lines.extend(

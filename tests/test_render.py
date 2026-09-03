@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 from daily_brief.models import ClassificationOutput, ClassifiedItem, GuidanceItem, GuidanceResult
@@ -50,3 +50,14 @@ def test_guidance_is_inserted_only_under_matching_key() -> None:
 def test_updated_header_is_explicit() -> None:
     assert "Updated this morning" in render_brief(classification([]), updated=True)
 
+
+def test_canvas_tasks_show_course_and_local_deadline() -> None:
+    canvas = item("assignment:1").model_copy(
+        update={
+            "course": "AP Physics",
+            "due_at": datetime(2026, 9, 5, 4, tzinfo=timezone.utc),
+        }
+    )
+    text = render_brief(classification([canvas]))
+    assert "Course: AP Physics" in text
+    assert "due Fri Sep 4, 21:00 PDT" in text

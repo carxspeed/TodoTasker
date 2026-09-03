@@ -210,6 +210,9 @@ An overdue assignment whose submission mode is `on_paper` is shown under
 **VERIFY** instead of being asserted as unfinished. Canvas often leaves offline
 work marked `unsubmitted` even after it was handed in.
 
+Briefs display the Canvas course beneath each assignment and render assignment
+deadlines in the configured local timezone, including its timezone abbreviation.
+
 Start the one-time interactive login:
 
 ```powershell
