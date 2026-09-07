@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from daily_brief.canvas import (
     CanvasError,
+    ensure_canvas_session,
     exclude_course_assignments,
     fetch_live,
     load_fixture,
@@ -73,6 +74,8 @@ def main() -> int:
                     context.close()
             else:
                 with open_saved_canvas_context(playwright, args.profile) as context:
+                    ensure_canvas_session(context, str(settings.canvas_base))
+                    save_canvas_session(context, args.profile)
                     effective_date = target_date or datetime.now(
                         ZoneInfo(settings.timezone)
                     ).date()

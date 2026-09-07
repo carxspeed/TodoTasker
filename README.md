@@ -223,6 +223,12 @@ Complete Microsoft SSO in the opened Chromium window. Return to PowerShell and p
 
 The saved Playwright browser profile and `profile\storage-state.json` contain sensitive session data and are ignored by Git. Protect them like `.env`. If Canvas later reports an expired session, run the login command again. If login reports that the profile is already in use, close all Chromium windows opened by the tasker and retry.
 
+Successful Canvas reads persist refreshed cookies back to `storage-state.json`. If
+the Canvas session cookie expires, the tasker first follows the district's
+Microsoft SSO route headlessly and renews Canvas using the saved Microsoft
+session. Manual login is only required when Microsoft itself expires the account
+session or requires interactive authentication such as MFA.
+
 ## 9. Verify each read-only connection
 
 These commands fetch and summarize data but do not create Notion pages or send Telegram messages:

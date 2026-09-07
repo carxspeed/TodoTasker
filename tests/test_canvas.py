@@ -9,6 +9,7 @@ from daily_brief.canvas import (
     CanvasError,
     assignment_collection_window,
     canvas_storage_state_path,
+    ensure_canvas_session,
     enrich_assignment_details,
     exclude_course_assignments,
     extract_document_text,
@@ -67,6 +68,11 @@ def test_verified_session_state_is_saved_and_restored_in_a_fresh_context(tmp_pat
 
     class Context:
         closed = False
+        saved = False
+
+        def storage_state(self, *, path):
+            self.saved = True
+            Path(path).write_text('{"cookies":[{"name":"renewed"}],"origins":[]}', encoding="utf-8")
 
         def close(self):
             self.closed = True
@@ -93,7 +99,50 @@ def test_verified_session_state_is_saved_and_restored_in_a_fresh_context(tmp_pat
     playwright = type("Playwright", (), {"chromium": Chromium()})()
     with open_saved_canvas_context(playwright, profile) as restored:
         assert restored is context
-    assert context.closed and browser.closed
+    assert context.closed and browser.closed and context.saved
+
+
+def test_expired_canvas_session_renews_through_microsoft() -> None:
+    responses = iter(
+        [
+            Response(
+                200,
+                ValueError(),
+                headers={"content-type": "text/html"},
+                url="https://canvas.test/login/canvas",
+            ),
+            Response(200, {"id": 42, "name": "Student"}),
+        ]
+    )
+
+    class Request:
+        def get(self, *args, **kwargs):
+            return next(responses)
+
+    class Page:
+        closed = False
+        destination = ""
+
+        def goto(self, url, **kwargs):
+            self.destination = url
+
+        def wait_for_timeout(self, value):
+            raise AssertionError("zero renewal wait should skip timeout")
+
+        def close(self):
+            self.closed = True
+
+    page = Page()
+    context = type(
+        "Context",
+        (),
+        {"request": Request(), "new_page": lambda self: page},
+    )()
+
+    user = ensure_canvas_session(context, "https://canvas.test", renewal_wait_ms=0)
+    assert user["id"] == 42
+    assert page.destination == "https://canvas.test/login/microsoft"
+    assert page.closed is True
 
 
 def test_missing_saved_session_requires_login(tmp_path: Path) -> None:

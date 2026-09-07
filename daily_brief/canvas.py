@@ -128,7 +128,7 @@ def save_canvas_session(context, profile: str | Path) -> Path:
 
 @contextmanager
 def open_saved_canvas_context(playwright, profile: str | Path) -> Iterator[Any]:
-    """Open a fresh headless context from the last verified login state."""
+    """Open a headless context and persist renewed cookies after successful use."""
     state_path = canvas_storage_state_path(profile)
     if not state_path.exists():
         raise CanvasError("SESSION_EXPIRED", "run canvas.py login", exit_code=2)
@@ -142,11 +142,17 @@ def open_saved_canvas_context(playwright, profile: str | Path) -> Iterator[Any]:
         raise CanvasError(
             "CANVAS_BROWSER_ERROR", "could not restore the saved Canvas session"
         ) from exc
+    completed = False
     try:
         yield context
+        completed = True
     finally:
-        context.close()
-        browser.close()
+        try:
+            if completed:
+                save_canvas_session(context, profile)
+        finally:
+            context.close()
+            browser.close()
 
 
 def _response_json(response, *, expected: type, session_check: bool = False) -> Any:
@@ -193,6 +199,46 @@ def verify_session(request, base_url: str) -> dict[str, Any]:
             "CANVAS_TEMPORARY_FAILURE", "could not verify the Canvas session"
         ) from exc
     return _response_json(response, expected=dict, session_check=True)
+
+
+def ensure_canvas_session(
+    context, base_url: str, *, renewal_wait_ms: int = 3_000
+) -> dict[str, Any]:
+    """Verify Canvas and silently renew it through Microsoft SSO when possible."""
+
+    base = base_url.rstrip("/")
+    try:
+        return verify_session(context.request, base)
+    except CanvasError as exc:
+        if exc.code != "SESSION_EXPIRED":
+            raise
+
+    page = context.new_page()
+    try:
+        page.goto(
+            f"{base}/login/microsoft",
+            wait_until="domcontentloaded",
+            timeout=60_000,
+        )
+        if renewal_wait_ms:
+            page.wait_for_timeout(renewal_wait_ms)
+        return verify_session(context.request, base)
+    except CanvasError as exc:
+        if exc.code == "SESSION_EXPIRED":
+            raise CanvasError(
+                "SESSION_EXPIRED",
+                "automatic Microsoft renewal failed; run canvas.py login",
+                exit_code=2,
+            ) from exc
+        raise
+    except Exception as exc:
+        raise CanvasError(
+            "SESSION_EXPIRED",
+            "automatic Microsoft renewal failed; run canvas.py login",
+            exit_code=2,
+        ) from exc
+    finally:
+        page.close()
 
 
 def paginate(

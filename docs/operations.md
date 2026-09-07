@@ -19,6 +19,10 @@ The `.env` file, Playwright profile, runtime state, caches, generated briefs, in
 3. Add the Google Calendar secret iCal address to `.env`.
 4. Run `venv\Scripts\python.exe canvas.py login`, complete Microsoft SSO manually, press Enter, and close the browser cleanly.
 
+Each successful Canvas read persists refreshed cookies. An expired Canvas cookie
+is automatically renewed through the saved Microsoft SSO session; rerun the
+interactive login only when Microsoft requires user interaction.
+
 No live mutation should be attempted until the corresponding fixture and transport-mock tests pass.
 
 ## Commands

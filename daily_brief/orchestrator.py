@@ -12,10 +12,12 @@ from zoneinfo import ZoneInfo
 from .atomic import atomic_write_json, atomic_write_text
 from .calendar import build_calendar_snapshot, fetch_ical
 from .canvas import (
+    ensure_canvas_session,
     exclude_course_assignments,
     fetch_live,
     load_fixture,
     open_saved_canvas_context,
+    save_canvas_session,
 )
 from .classifier import classify
 from .config import Settings
@@ -70,6 +72,8 @@ class LiveSourceProvider:
 
         with sync_playwright() as playwright:
             with open_saved_canvas_context(playwright, self.profile) as context:
+                ensure_canvas_session(context, str(self.settings.canvas_base))
+                save_canvas_session(context, self.profile)
                 return fetch_live(
                     context.request,
                     str(self.settings.canvas_base),
