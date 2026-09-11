@@ -2,6 +2,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import daily_brief.orchestrator as orchestrator_module
 from daily_brief.canvas import load_fixture
 from daily_brief.config import load_settings
 from daily_brief.models import (
@@ -12,7 +13,7 @@ from daily_brief.models import (
     NotionSnapshot,
 )
 from daily_brief.notion import BriefPageResult
-from daily_brief.orchestrator import DailyBriefOrchestrator
+from daily_brief.orchestrator import DailyBriefOrchestrator, LiveSourceProvider
 from daily_brief.state import StateStore
 from daily_brief.telegram import TelegramResult, build_summary
 
@@ -100,6 +101,34 @@ def make_orchestrator(tmp_path: Path, guidance=None, notion=None, telegram=None)
         notion_delivery=notion,
         telegram=telegram,
     )
+
+
+def test_live_source_provider_prefers_canvas_token(tmp_path: Path, monkeypatch) -> None:
+    class Vault:
+        def get_many(self, names):
+            return {"CANVAS_ACCESS_TOKEN": "test-canvas-token"}
+
+    settings = load_settings(tmp_path / "missing.env", secret_vault=Vault())
+    opened = []
+
+    class TokenRequest:
+        def __init__(self, base_url, token):
+            opened.append((base_url, token))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    expected = load_fixture("fixtures/sample_todo.json")
+    monkeypatch.setattr(orchestrator_module, "CanvasTokenRequest", TokenRequest)
+    monkeypatch.setattr(orchestrator_module, "fetch_live", lambda *args, **kwargs: expected)
+
+    result = LiveSourceProvider(settings).fetch_canvas(TARGET)
+
+    assert result is expected
+    assert opened == [("https://issaquah.instructure.com/", "test-canvas-token")]
 
 
 def test_prepare_dry_run_makes_one_call_and_writes_nothing(tmp_path: Path) -> None:

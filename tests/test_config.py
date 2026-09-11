@@ -43,6 +43,15 @@ def test_secret_values_are_loaded_from_vault(tmp_path: Path) -> None:
     assert settings.notion_token == "vault-notion-token"
 
 
+def test_canvas_token_is_loaded_from_vault(tmp_path: Path) -> None:
+    settings = load_settings(
+        tmp_path / "missing.env",
+        secret_vault=Vault({"CANVAS_ACCESS_TOKEN": "vault-canvas-token"}),
+    )
+
+    assert settings.canvas_access_token == "vault-canvas-token"
+
+
 def test_plaintext_env_secrets_are_rejected(tmp_path: Path) -> None:
     env = tmp_path / ".env"
     write_env(env, NOTION_TOKEN="plaintext-value")

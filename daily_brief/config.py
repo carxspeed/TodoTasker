@@ -60,6 +60,7 @@ class Settings(BaseModel):
     ical_url: str = ""
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
+    canvas_access_token: str = ""
     model_provider: Literal["local", "anthropic"] = "local"
     ollama_model: str = "qwen3:4b"
     ollama_base_url: HttpUrl = "http://localhost:11434"
@@ -238,6 +239,7 @@ def load_settings(
         "ical_url": values.get("ICAL_URL", ""),
         "anthropic_api_key": values.get("ANTHROPIC_API_KEY", ""),
         "anthropic_model": values.get("ANTHROPIC_MODEL", "claude-sonnet-5"),
+        "canvas_access_token": values.get("CANVAS_ACCESS_TOKEN", ""),
         "model_provider": values.get("MODEL_PROVIDER", "local"),
         "ollama_model": values.get("OLLAMA_MODEL", "qwen3:4b"),
         "ollama_base_url": values.get("OLLAMA_BASE_URL", "http://localhost:11434"),

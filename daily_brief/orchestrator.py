@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from .atomic import atomic_write_json, atomic_write_text
 from .calendar import build_calendar_snapshot, fetch_ical
 from .canvas import (
+    CanvasTokenRequest,
     ensure_canvas_session,
     exclude_course_assignments,
     fetch_live,
@@ -68,6 +69,17 @@ class LiveSourceProvider:
     def fetch_canvas(self, target_date: date) -> CanvasEnvelope:
         if self.fixture:
             return load_fixture(self.fixture)
+        if self.settings.canvas_access_token:
+            with CanvasTokenRequest(
+                str(self.settings.canvas_base), self.settings.canvas_access_token
+            ) as request:
+                return fetch_live(
+                    request,
+                    str(self.settings.canvas_base),
+                    target_date,
+                    self.settings.timezone,
+                    excluded_course_ids=self.settings.canvas_excluded_course_ids,
+                )
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as playwright:

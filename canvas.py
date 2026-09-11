@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from daily_brief.canvas import (
     CanvasError,
+    CanvasTokenRequest,
     ensure_canvas_session,
     exclude_course_assignments,
     fetch_live,
@@ -53,43 +54,62 @@ def main() -> int:
             )
             print(envelope.model_dump_json())
             return 0
-        from playwright.sync_api import sync_playwright
+        if args.command == "fetch" and settings.canvas_access_token:
+            with CanvasTokenRequest(
+                str(settings.canvas_base), settings.canvas_access_token
+            ) as request:
+                effective_date = target_date or datetime.now(
+                    ZoneInfo(settings.timezone)
+                ).date()
+                envelope = fetch_live(
+                    request,
+                    str(settings.canvas_base),
+                    effective_date,
+                    settings.timezone,
+                    excluded_course_ids=settings.canvas_excluded_course_ids,
+                )
+                envelope = exclude_course_assignments(
+                    envelope, settings.canvas_excluded_course_ids
+                )
+                print(envelope.model_dump_json())
+        else:
+            from playwright.sync_api import sync_playwright
 
-        with sync_playwright() as playwright:
-            if args.command == "login":
-                try:
-                    context = playwright.chromium.launch_persistent_context(
-                        str(args.profile.resolve()), headless=False
-                    )
-                except Exception as exc:
-                    raise _profile_error(exc) from exc
-                try:
-                    context.pages[0].goto(str(settings.canvas_base))
-                    print("Log in via Microsoft, then press Enter here")
-                    input()
-                    verify_session(context.request, str(settings.canvas_base))
-                    save_canvas_session(context, args.profile)
-                    print("Canvas session verified and saved.")
-                finally:
-                    context.close()
-            else:
-                with open_saved_canvas_context(playwright, args.profile) as context:
-                    ensure_canvas_session(context, str(settings.canvas_base))
-                    save_canvas_session(context, args.profile)
-                    effective_date = target_date or datetime.now(
-                        ZoneInfo(settings.timezone)
-                    ).date()
-                    envelope = fetch_live(
-                        context.request,
-                        str(settings.canvas_base),
-                        effective_date,
-                        settings.timezone,
-                        excluded_course_ids=settings.canvas_excluded_course_ids,
-                    )
-                    envelope = exclude_course_assignments(
-                        envelope, settings.canvas_excluded_course_ids
-                    )
-                    print(envelope.model_dump_json())
+            with sync_playwright() as playwright:
+                if args.command == "login":
+                    try:
+                        context = playwright.chromium.launch_persistent_context(
+                            str(args.profile.resolve()), headless=False
+                        )
+                    except Exception as exc:
+                        raise _profile_error(exc) from exc
+                    try:
+                        context.pages[0].goto(str(settings.canvas_base))
+                        print("Log in via Microsoft, then press Enter here")
+                        input()
+                        verify_session(context.request, str(settings.canvas_base))
+                        save_canvas_session(context, args.profile)
+                        print("Canvas session verified and saved.")
+                    finally:
+                        context.close()
+                else:
+                    with open_saved_canvas_context(playwright, args.profile) as context:
+                        ensure_canvas_session(context, str(settings.canvas_base))
+                        save_canvas_session(context, args.profile)
+                        effective_date = target_date or datetime.now(
+                            ZoneInfo(settings.timezone)
+                        ).date()
+                        envelope = fetch_live(
+                            context.request,
+                            str(settings.canvas_base),
+                            effective_date,
+                            settings.timezone,
+                            excluded_course_ids=settings.canvas_excluded_course_ids,
+                        )
+                        envelope = exclude_course_assignments(
+                            envelope, settings.canvas_excluded_course_ids
+                        )
+                        print(envelope.model_dump_json())
         return 0
     except (ConfigurationError, CanvasError) as exc:
         print(exc)

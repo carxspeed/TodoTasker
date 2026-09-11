@@ -27,5 +27,6 @@ def test_example_environment_contains_no_credentials() -> None:
         "TELEGRAM_CHAT_ID",
         "ICAL_URL",
         "ANTHROPIC_API_KEY",
+        "CANVAS_ACCESS_TOKEN",
     ):
         assert entries[key] == ""

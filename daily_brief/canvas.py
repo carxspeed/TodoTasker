@@ -13,11 +13,12 @@ from datetime import date, datetime, time as wall_time, timedelta
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from zipfile import BadZipFile, ZipFile
 from zoneinfo import ZoneInfo
 
 import html2text
+import requests
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
 
@@ -50,6 +51,7 @@ ATTACHMENT_TEXT_LIMIT = 1600
 MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 MAX_ATTACHMENTS_PER_ASSIGNMENT = 3
 MAX_PDF_PAGES = 12
+MAX_HTTP_REDIRECTS = 5
 
 
 class CanvasError(RuntimeError):
@@ -57,6 +59,97 @@ class CanvasError(RuntimeError):
         self.code = code
         self.exit_code = exit_code
         super().__init__(f"{code}: {message}")
+
+
+def _origin(url: str) -> tuple[str, str, int]:
+    try:
+        parsed = urlparse(url)
+        scheme = parsed.scheme.casefold()
+        hostname = (parsed.hostname or "").casefold()
+        port = parsed.port or (443 if scheme == "https" else 80)
+    except ValueError as exc:
+        raise CanvasError("CANVAS_UNSAFE_URL", "Canvas returned an invalid URL") from exc
+    if scheme != "https" or not hostname or parsed.username or parsed.password:
+        raise CanvasError("CANVAS_UNSAFE_URL", "Canvas returned a non-HTTPS or credentialed URL")
+    return scheme, hostname, port
+
+
+class _RequestsResponse:
+    """Expose the small Playwright response interface used by the Canvas adapter."""
+
+    def __init__(self, response) -> None:
+        self._response = response
+        self.status = int(response.status_code)
+        self.url = str(response.url)
+        self.headers = dict(response.headers)
+
+    def json(self):
+        return self._response.json()
+
+    def body(self) -> bytes:
+        return bytes(self._response.content)
+
+
+class CanvasTokenRequest:
+    """Canvas HTTP transport that never forwards its bearer token off-origin."""
+
+    def __init__(self, base_url: str, token: str, *, session=None) -> None:
+        self._base_origin = _origin(base_url)
+        if not token or "\r" in token or "\n" in token:
+            raise CanvasError("CANVAS_TOKEN_INVALID", "Canvas access token is invalid")
+        self._token = token
+        self._session = session or requests.Session()
+        self._closed = False
+        if session is None:
+            self._session.trust_env = False
+
+    def close(self) -> None:
+        if not self._closed:
+            self._token = ""
+            self._session.close()
+            self._closed = True
+
+    def __enter__(self) -> CanvasTokenRequest:
+        return self
+
+    def __exit__(self, *_args) -> None:
+        self.close()
+
+    def get(self, url: str, *, params=None, timeout: int = 30_000):
+        if self._closed:
+            raise CanvasError("CANVAS_BROWSER_CLOSED", "Canvas token transport is closed")
+        current = str(url)
+        current_params = params
+        for redirect_count in range(MAX_HTTP_REDIRECTS + 1):
+            current_origin = _origin(current)
+            headers = {"Accept": "application/json"}
+            if current_origin == self._base_origin:
+                headers["Authorization"] = f"Bearer {self._token}"
+            try:
+                response = self._session.get(
+                    current,
+                    params=current_params,
+                    headers=headers,
+                    timeout=max(timeout / 1000, 0.001),
+                    allow_redirects=False,
+                )
+                prepared = getattr(response, "request", None)
+                if prepared is not None:
+                    prepared.headers.pop("Authorization", None)
+            except requests.RequestException as exc:
+                raise CanvasError(
+                    "CANVAS_TEMPORARY_FAILURE", "Canvas connection failed"
+                ) from exc
+            status = int(response.status_code)
+            location = response.headers.get("Location") or response.headers.get("location")
+            if status not in {301, 302, 303, 307, 308} or not location:
+                return _RequestsResponse(response)
+            if redirect_count == MAX_HTTP_REDIRECTS:
+                raise CanvasError("CANVAS_UNSAFE_URL", "Canvas returned too many redirects")
+            current = urljoin(str(response.url), str(location))
+            _origin(current)
+            current_params = None
+        raise AssertionError("unreachable")
 
 
 def exclude_course_assignments(
@@ -254,8 +347,13 @@ def paginate(
     next_url: str | None = url
     first = True
     seen: set[str] = set()
+    expected_origin = _origin(url)
     results: list[dict[str, Any]] = []
     while next_url:
+        if _origin(next_url) != expected_origin:
+            raise CanvasError(
+                "CANVAS_UNSAFE_URL", "Canvas pagination attempted to leave its origin"
+            )
         if next_url in seen:
             raise CanvasError("CANVAS_API_ERROR", "pagination repeated the same next URL")
         seen.add(next_url)
@@ -368,7 +466,7 @@ def _download_attachment_text(request, base: str, file_id: int) -> tuple[str, st
     if isinstance(size, (int, float)) and size > MAX_ATTACHMENT_BYTES:
         raise ValueError("attachment exceeds the 5 MB extraction limit")
     download_url = str(metadata.get("url") or "")
-    if urlparse(download_url).scheme not in {"http", "https"}:
+    if urlparse(download_url).scheme != "https":
         raise ValueError("attachment has no safe download URL")
     response = request.get(download_url, timeout=30_000)
     if int(response.status) >= 400:
