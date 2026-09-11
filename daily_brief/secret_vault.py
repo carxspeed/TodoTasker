@@ -232,12 +232,23 @@ class SecretVault:
     def get(self, name: str) -> str:
         return self._read().get(self._name(name), "")
 
-    def set(self, name: str, value: str) -> None:
-        normalized = self._name(name)
-        if not value:
-            raise SecretVaultError("secret values cannot be empty")
+    def get_many(self, names: set[str] | frozenset[str]) -> dict[str, str]:
+        normalized = {self._name(name) for name in names}
         values = self._read()
-        values[normalized] = value
+        return {name: values[name] for name in normalized if values.get(name)}
+
+    def set(self, name: str, value: str) -> None:
+        self.set_many({name: value})
+
+    def set_many(self, updates: dict[str, str]) -> None:
+        normalized: dict[str, str] = {}
+        for name, value in updates.items():
+            key = self._name(name)
+            if not value:
+                raise SecretVaultError("secret values cannot be empty")
+            normalized[key] = value
+        values = self._read()
+        values.update(normalized)
         self._write(values)
 
     def delete(self, name: str) -> bool:

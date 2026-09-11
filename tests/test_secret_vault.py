@@ -51,6 +51,24 @@ def test_updates_are_atomic_and_preserve_other_values(tmp_path: Path) -> None:
     assert not list(tmp_path.glob("*.tmp"))
 
 
+def test_set_many_encrypts_all_values_in_one_write(tmp_path: Path) -> None:
+    path = tmp_path / "secrets.dpapi"
+    store = vault(path)
+    store.set_many(
+        {
+            "NOTION_TOKEN": "notion-value",
+            "TELEGRAM_BOT_TOKEN": "telegram-value",
+        }
+    )
+
+    assert store.get_many(frozenset({"NOTION_TOKEN", "TELEGRAM_BOT_TOKEN"})) == {
+        "NOTION_TOKEN": "notion-value",
+        "TELEGRAM_BOT_TOKEN": "telegram-value",
+    }
+    assert b"notion-value" not in path.read_bytes()
+    assert b"telegram-value" not in path.read_bytes()
+
+
 def test_delete_does_not_reveal_or_damage_other_values(tmp_path: Path) -> None:
     store = vault(tmp_path / "secrets.dpapi")
     store.set("NOTION_TOKEN", "notion-value")

@@ -12,6 +12,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from dotenv import dotenv_values
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
+from .secret_vault import SECRET_NAMES, SecretVault, SecretVaultError
+
 
 WEEKDAYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
@@ -149,7 +151,10 @@ def _parse_schedule(name: str, raw: str) -> dict[str, list[TimeInterval]]:
 
 
 def load_settings(
-    env_file: str | Path = ".env", *, required: tuple[str, ...] = ()
+    env_file: str | Path = ".env",
+    *,
+    required: tuple[str, ...] = (),
+    secret_vault: SecretVault | None = None,
 ) -> Settings:
     """Load settings without mutating process environment.
 
@@ -158,7 +163,33 @@ def load_settings(
     """
 
     file_values = {k: v for k, v in dotenv_values(env_file).items() if v is not None}
-    values = {**file_values, **os.environ}
+    plaintext_secret_names = sorted(
+        name for name in SECRET_NAMES if str(file_values.get(name, "")).strip()
+    )
+    if plaintext_secret_names:
+        raise ConfigurationError(
+            "plaintext secrets are not allowed in .env; run "
+            "manage_secrets.py migrate-env for: "
+            + ", ".join(plaintext_secret_names)
+        )
+
+    vault_values: dict[str, str] = {}
+    try:
+        vault = secret_vault
+        use_default_vault = Path(env_file).resolve() == Path(".env").resolve()
+        if (
+            vault is None
+            and use_default_vault
+            and os.name == "nt"
+            and os.environ.get("LOCALAPPDATA")
+        ):
+            vault = SecretVault()
+        if vault is not None:
+            vault_values = vault.get_many(SECRET_NAMES)
+    except SecretVaultError as exc:
+        raise ConfigurationError(f"could not load the secure secret vault: {exc}") from exc
+
+    values = {**file_values, **vault_values, **os.environ}
 
     missing = [name for name in required if not str(values.get(name, "")).strip()]
     if missing:

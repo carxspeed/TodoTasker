@@ -10,6 +10,14 @@ def write_env(path: Path, **values: str) -> None:
     path.write_text("\n".join(f"{key}={value}" for key, value in values.items()), encoding="utf-8")
 
 
+class Vault:
+    def __init__(self, values: dict[str, str]):
+        self.values = values
+
+    def get_many(self, names):
+        return {name: value for name, value in self.values.items() if name in names}
+
+
 def test_defaults_are_safe_and_timezone_is_valid(tmp_path: Path) -> None:
     settings = load_settings(tmp_path / "missing.env")
     assert settings.model_provider == "local"
@@ -23,6 +31,24 @@ def test_defaults_are_safe_and_timezone_is_valid(tmp_path: Path) -> None:
 def test_required_values_are_command_specific(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError, match="NOTION_TOKEN"):
         load_settings(tmp_path / "missing.env", required=("NOTION_TOKEN",))
+
+
+def test_secret_values_are_loaded_from_vault(tmp_path: Path) -> None:
+    settings = load_settings(
+        tmp_path / "missing.env",
+        required=("NOTION_TOKEN",),
+        secret_vault=Vault({"NOTION_TOKEN": "vault-notion-token"}),
+    )
+
+    assert settings.notion_token == "vault-notion-token"
+
+
+def test_plaintext_env_secrets_are_rejected(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    write_env(env, NOTION_TOKEN="plaintext-value")
+
+    with pytest.raises(ConfigurationError, match="manage_secrets.py migrate-env"):
+        load_settings(env)
 
 
 @pytest.mark.parametrize(
