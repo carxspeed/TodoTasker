@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
         command = sub.add_parser(name)
         command.add_argument("--target-date", type=date.fromisoformat)
         command.add_argument("--fixture", type=Path)
-        command.add_argument("--profile", type=Path, default=Path("profile"))
+        command.add_argument("--profile", type=Path)
         command.add_argument("--dry-run", action="store_true")
     watchdog = sub.add_parser("watchdog")
     watchdog.add_argument("--target-date", type=date.fromisoformat)

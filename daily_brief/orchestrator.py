@@ -60,7 +60,7 @@ class LiveSourceProvider:
         settings: Settings,
         *,
         fixture: Path | None = None,
-        profile: Path = Path("profile"),
+        profile: Path | None = None,
     ) -> None:
         self.settings = settings
         self.fixture = fixture

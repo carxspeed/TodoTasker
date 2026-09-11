@@ -15,6 +15,7 @@ from daily_brief.canvas import (
     exclude_course_assignments,
     fetch_live,
     load_fixture,
+    migrate_legacy_canvas_session,
     open_saved_canvas_context,
     save_canvas_session,
     verify_session,
@@ -26,18 +27,18 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
     login = sub.add_parser("login")
-    login.add_argument("--profile", type=Path, default=Path("profile"))
+    login.add_argument("--profile", type=Path)
     fetch = sub.add_parser("fetch")
-    fetch.add_argument("--profile", type=Path, default=Path("profile"))
+    fetch.add_argument("--profile", type=Path)
     fetch.add_argument("--fixture", type=Path)
     fetch.add_argument("--target-date", type=date.fromisoformat)
+    migrate = sub.add_parser("migrate-session")
+    migrate.add_argument("--legacy-profile", type=Path, default=Path("profile"))
+    migrate.add_argument("--profile", type=Path)
     return parser.parse_args()
 
 
 def _profile_error(exc: Exception) -> CanvasError:
-    message = str(exc).lower()
-    if "processsingleton" in message or "profile" in message and "in use" in message:
-        return CanvasError("PROFILE_IN_USE", "close the Canvas login browser and retry")
     return CanvasError("CANVAS_BROWSER_ERROR", "could not start the Canvas browser")
 
 
@@ -48,6 +49,12 @@ def main() -> int:
     try:
         settings = load_settings()
         target_date = args.target_date if hasattr(args, "target_date") else None
+        if args.command == "migrate-session":
+            destination = migrate_legacy_canvas_session(
+                args.legacy_profile, args.profile
+            )
+            print(f"Encrypted legacy Canvas session at {destination}.")
+            return 0
         if args.command == "fetch" and args.fixture:
             envelope = exclude_course_assignments(
                 load_fixture(args.fixture), settings.canvas_excluded_course_ids
@@ -77,14 +84,15 @@ def main() -> int:
 
             with sync_playwright() as playwright:
                 if args.command == "login":
+                    browser = None
                     try:
-                        context = playwright.chromium.launch_persistent_context(
-                            str(args.profile.resolve()), headless=False
-                        )
+                        browser = playwright.chromium.launch(headless=False)
+                        context = browser.new_context()
                     except Exception as exc:
                         raise _profile_error(exc) from exc
                     try:
-                        context.pages[0].goto(str(settings.canvas_base))
+                        page = context.new_page()
+                        page.goto(str(settings.canvas_base))
                         print("Log in via Microsoft, then press Enter here")
                         input()
                         verify_session(context.request, str(settings.canvas_base))
@@ -92,6 +100,7 @@ def main() -> int:
                         print("Canvas session verified and saved.")
                     finally:
                         context.close()
+                        browser.close()
                 else:
                     with open_saved_canvas_context(playwright, args.profile) as context:
                         ensure_canvas_session(context, str(settings.canvas_base))

@@ -14,7 +14,9 @@ from daily_brief.canvas import (
     exclude_course_assignments,
     extract_document_text,
     load_fixture,
+    load_canvas_session,
     mark_overdue_on_paper_for_verification,
+    migrate_legacy_canvas_session,
     normalize_assignment_sources,
     open_saved_canvas_context,
     paginate,
@@ -57,22 +59,28 @@ def docx_bytes(text: str) -> bytes:
 def test_verified_session_state_is_saved_and_restored_in_a_fresh_context(tmp_path: Path) -> None:
     profile = tmp_path / "profile"
 
-    class LoginContext:
-        def storage_state(self, *, path):
-            Path(path).write_text('{"cookies":[],"origins":[]}', encoding="utf-8")
+    def protect(value: bytes) -> bytes:
+        return bytes(byte ^ 0x6D for byte in value)
 
-    state_path = save_canvas_session(LoginContext(), profile)
+    class LoginContext:
+        def storage_state(self):
+            return {"cookies": [], "origins": []}
+
+    state_path = save_canvas_session(
+        LoginContext(), profile, protect=protect, harden=lambda _: None
+    )
     assert state_path == canvas_storage_state_path(profile)
     assert state_path.exists()
-    assert not state_path.with_suffix(".tmp").exists()
+    assert b"cookies" not in state_path.read_bytes()
+    assert not state_path.with_suffix(state_path.suffix + ".tmp").exists()
 
     class Context:
         closed = False
         saved = False
 
-        def storage_state(self, *, path):
+        def storage_state(self):
             self.saved = True
-            Path(path).write_text('{"cookies":[{"name":"renewed"}],"origins":[]}', encoding="utf-8")
+            return {"cookies": [{"name": "renewed"}], "origins": []}
 
         def close(self):
             self.closed = True
@@ -83,7 +91,7 @@ def test_verified_session_state_is_saved_and_restored_in_a_fresh_context(tmp_pat
         closed = False
 
         def new_context(self, **kwargs):
-            assert kwargs == {"storage_state": str(state_path)}
+            assert kwargs == {"storage_state": {"cookies": [], "origins": []}}
             return context
 
         def close(self):
@@ -97,9 +105,42 @@ def test_verified_session_state_is_saved_and_restored_in_a_fresh_context(tmp_pat
             return browser
 
     playwright = type("Playwright", (), {"chromium": Chromium()})()
-    with open_saved_canvas_context(playwright, profile) as restored:
+    with open_saved_canvas_context(
+        playwright,
+        profile,
+        protect=protect,
+        unprotect=protect,
+        harden=lambda _: None,
+    ) as restored:
         assert restored is context
     assert context.closed and browser.closed and context.saved
+
+
+def test_legacy_plaintext_session_migrates_to_encrypted_state(tmp_path: Path) -> None:
+    profile = tmp_path / "legacy-profile"
+    profile.mkdir()
+    legacy = profile / "storage-state.json"
+    legacy.write_text('{"cookies":[],"origins":[]}', encoding="utf-8")
+
+    def protect(value: bytes) -> bytes:
+        return bytes(byte ^ 0x2B for byte in value)
+
+    destination_profile = tmp_path / "secure-profile"
+    destination = migrate_legacy_canvas_session(
+        profile,
+        destination_profile,
+        protect=protect,
+        unprotect=protect,
+        harden=lambda _: None,
+    )
+
+    assert destination == canvas_storage_state_path(destination_profile)
+    assert b"cookies" not in destination.read_bytes()
+    assert load_canvas_session(destination_profile, unprotect=protect) == {
+        "cookies": [],
+        "origins": [],
+    }
+    assert legacy.exists()  # Removal happens only after a separately verified live read.
 
 
 def test_expired_canvas_session_renews_through_microsoft() -> None:

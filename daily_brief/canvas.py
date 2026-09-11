@@ -1,4 +1,4 @@
-"""Canvas REST adapter using a Playwright persistent browser context."""
+"""Canvas REST adapter with token auth and an encrypted browser-session fallback."""
 
 from __future__ import annotations
 
@@ -33,6 +33,13 @@ from .models import (
     PlannerEvent,
     PlannerObservation,
 )
+from .secret_vault import (
+    SecretVaultError,
+    default_vault_path,
+    dpapi_protect,
+    dpapi_unprotect,
+    restrict_windows_acl,
+)
 from .timeutils import parse_external_timestamp, utc_now
 
 
@@ -44,7 +51,10 @@ WEEKDAY_RE = re.compile(rf"\b{WEEKDAY}\b", re.IGNORECASE)
 REJECT_DATE_CONTEXT = re.compile(r"score|points|pts|out of|fraction|read|chapter|problem", re.I)
 PLANNER_TITLE_RE = re.compile(r"planner|week at a glance|agenda|schedule|calendar", re.I)
 ASSESSMENT_RE = re.compile(r"\b(?:quiz|test|exam|assessment)\b", re.I)
-STORAGE_STATE_FILENAME = "storage-state.json"
+STORAGE_STATE_FILENAME = "storage-state.dpapi"
+LEGACY_STORAGE_STATE_FILENAME = "storage-state.json"
+CANVAS_STATE_MAGIC = b"TODO-TASKER-CANVAS-DPAPI\x01\n"
+MAX_CANVAS_STATE_BYTES = 5 * 1024 * 1024
 ASSIGNMENT_LOOKBACK_DAYS = 14
 ASSIGNMENT_DESCRIPTION_LIMIT = 2000
 ATTACHMENT_TEXT_LIMIT = 1600
@@ -202,33 +212,175 @@ def assignment_collection_window(target_date: date) -> tuple[date, date]:
     )
 
 
-def canvas_storage_state_path(profile: str | Path) -> Path:
-    return Path(profile).resolve() / STORAGE_STATE_FILENAME
-
-
-def save_canvas_session(context, profile: str | Path) -> Path:
-    """Atomically save cookies and web storage after a verified interactive login."""
-    destination = canvas_storage_state_path(profile)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_suffix(".tmp")
+def canvas_storage_state_path(profile: str | Path | None = None) -> Path:
+    if profile is not None:
+        return Path(profile).resolve() / STORAGE_STATE_FILENAME
     try:
-        context.storage_state(path=str(temporary))
+        return default_vault_path().parent / "canvas-session.dpapi"
+    except SecretVaultError as exc:
+        raise CanvasError("CANVAS_SESSION_STORAGE_ERROR", str(exc), exit_code=2) from exc
+
+
+def legacy_canvas_storage_state_path(profile: str | Path = "profile") -> Path:
+    return Path(profile).resolve() / LEGACY_STORAGE_STATE_FILENAME
+
+
+def _validate_storage_state(value: Any) -> dict[str, Any]:
+    if (
+        not isinstance(value, dict)
+        or not isinstance(value.get("cookies"), list)
+        or not isinstance(value.get("origins"), list)
+    ):
+        raise CanvasError(
+            "CANVAS_SESSION_STORAGE_ERROR", "Canvas session data is invalid", exit_code=2
+        )
+    return value
+
+
+def _write_encrypted_canvas_state(
+    state: dict[str, Any],
+    destination: Path,
+    *,
+    protect: Callable[[bytes], bytes] = dpapi_protect,
+    harden: Callable[[Path], None] = restrict_windows_acl,
+) -> Path:
+    _validate_storage_state(state)
+    plaintext = bytearray(
+        json.dumps(state, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+    try:
+        encrypted = protect(bytes(plaintext))
+    except SecretVaultError as exc:
+        raise CanvasError("CANVAS_SESSION_STORAGE_ERROR", str(exc), exit_code=2) from exc
+    finally:
+        plaintext[:] = b"\x00" * len(plaintext)
+    payload = CANVAS_STATE_MAGIC + encrypted
+    if len(payload) > MAX_CANVAS_STATE_BYTES:
+        raise CanvasError(
+            "CANVAS_SESSION_STORAGE_ERROR", "Canvas session data is too large", exit_code=2
+        )
+
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        harden(destination.parent)
+        temporary.write_bytes(payload)
+        harden(temporary)
         os.replace(temporary, destination)
+        harden(destination)
+    except (OSError, SecretVaultError) as exc:
+        raise CanvasError("CANVAS_SESSION_STORAGE_ERROR", str(exc), exit_code=2) from exc
     finally:
         temporary.unlink(missing_ok=True)
     return destination
 
 
-@contextmanager
-def open_saved_canvas_context(playwright, profile: str | Path) -> Iterator[Any]:
-    """Open a headless context and persist renewed cookies after successful use."""
-    state_path = canvas_storage_state_path(profile)
-    if not state_path.exists():
+def load_canvas_session(
+    profile: str | Path | None = None,
+    *,
+    unprotect: Callable[[bytes], bytes] = dpapi_unprotect,
+) -> dict[str, Any]:
+    source = canvas_storage_state_path(profile)
+    if not source.exists():
         raise CanvasError("SESSION_EXPIRED", "run canvas.py login", exit_code=2)
+    try:
+        raw = source.read_bytes()
+    except OSError as exc:
+        raise CanvasError(
+            "CANVAS_SESSION_STORAGE_ERROR", "could not read Canvas session", exit_code=2
+        ) from exc
+    if len(raw) > MAX_CANVAS_STATE_BYTES or not raw.startswith(CANVAS_STATE_MAGIC):
+        raise CanvasError(
+            "CANVAS_SESSION_STORAGE_ERROR", "Canvas session data is invalid", exit_code=2
+        )
+    try:
+        plaintext = bytearray(unprotect(raw[len(CANVAS_STATE_MAGIC) :]))
+        state = json.loads(plaintext.decode("utf-8"))
+    except SecretVaultError as exc:
+        raise CanvasError("CANVAS_SESSION_STORAGE_ERROR", str(exc), exit_code=2) from exc
+    except Exception as exc:
+        raise CanvasError(
+            "CANVAS_SESSION_STORAGE_ERROR", "Canvas session data is invalid", exit_code=2
+        ) from exc
+    finally:
+        if "plaintext" in locals():
+            plaintext[:] = b"\x00" * len(plaintext)
+    return _validate_storage_state(state)
+
+
+def save_canvas_session(
+    context,
+    profile: str | Path | None = None,
+    *,
+    protect: Callable[[bytes], bytes] = dpapi_protect,
+    harden: Callable[[Path], None] = restrict_windows_acl,
+) -> Path:
+    """Atomically encrypt cookies and web storage for the current Windows user."""
+    destination = canvas_storage_state_path(profile)
+    try:
+        state = context.storage_state()
+    except Exception as exc:
+        raise CanvasError(
+            "CANVAS_SESSION_STORAGE_ERROR", "could not capture Canvas session", exit_code=2
+        ) from exc
+    return _write_encrypted_canvas_state(
+        state, destination, protect=protect, harden=harden
+    )
+
+
+def migrate_legacy_canvas_session(
+    legacy_profile: str | Path = "profile",
+    destination_profile: str | Path | None = None,
+    *,
+    protect: Callable[[bytes], bytes] = dpapi_protect,
+    unprotect: Callable[[bytes], bytes] = dpapi_unprotect,
+    harden: Callable[[Path], None] = restrict_windows_acl,
+) -> Path:
+    """Encrypt an existing plaintext Playwright state without printing its contents."""
+    source = legacy_canvas_storage_state_path(legacy_profile)
+    if not source.exists() or source.stat().st_size > MAX_CANVAS_STATE_BYTES:
+        raise CanvasError(
+            "CANVAS_SESSION_STORAGE_ERROR", "legacy Canvas session is unavailable", exit_code=2
+        )
+    try:
+        state = _validate_storage_state(json.loads(source.read_bytes()))
+    except CanvasError:
+        raise
+    except Exception as exc:
+        raise CanvasError(
+            "CANVAS_SESSION_STORAGE_ERROR", "legacy Canvas session is invalid", exit_code=2
+        ) from exc
+    destination = _write_encrypted_canvas_state(
+        state,
+        canvas_storage_state_path(destination_profile),
+        protect=protect,
+        harden=harden,
+    )
+    restored = load_canvas_session(destination_profile, unprotect=unprotect)
+    if restored != state:
+        raise CanvasError(
+            "CANVAS_SESSION_STORAGE_ERROR",
+            "encrypted Canvas session verification failed",
+            exit_code=2,
+        )
+    return destination
+
+
+@contextmanager
+def open_saved_canvas_context(
+    playwright,
+    profile: str | Path | None = None,
+    *,
+    protect: Callable[[bytes], bytes] = dpapi_protect,
+    unprotect: Callable[[bytes], bytes] = dpapi_unprotect,
+    harden: Callable[[Path], None] = restrict_windows_acl,
+) -> Iterator[Any]:
+    """Open a headless context and persist renewed cookies after successful use."""
+    state = load_canvas_session(profile, unprotect=unprotect)
     browser = None
     try:
         browser = playwright.chromium.launch(headless=True)
-        context = browser.new_context(storage_state=str(state_path))
+        context = browser.new_context(storage_state=state)
     except Exception as exc:
         if browser is not None:
             browser.close()
@@ -242,7 +394,9 @@ def open_saved_canvas_context(playwright, profile: str | Path) -> Iterator[Any]:
     finally:
         try:
             if completed:
-                save_canvas_session(context, profile)
+                save_canvas_session(
+                    context, profile, protect=protect, harden=harden
+                )
         finally:
             context.close()
             browser.close()
