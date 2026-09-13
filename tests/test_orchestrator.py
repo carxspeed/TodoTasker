@@ -3,7 +3,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import daily_brief.orchestrator as orchestrator_module
-from daily_brief.canvas import load_fixture
+from daily_brief.canvas import CanvasError, load_fixture
 from daily_brief.config import load_settings
 from daily_brief.models import (
     CalendarSnapshot,
@@ -129,6 +129,70 @@ def test_live_source_provider_prefers_canvas_token(tmp_path: Path, monkeypatch) 
 
     assert result is expected
     assert opened == [("https://issaquah.instructure.com/", "test-canvas-token")]
+
+
+def test_live_source_provider_uses_encrypted_session_if_token_expired(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class Vault:
+        def get_many(self, names):
+            return {"CANVAS_ACCESS_TOKEN": "expired-token"}
+
+    settings = load_settings(tmp_path / "missing.env", secret_vault=Vault())
+    provider = LiveSourceProvider(settings)
+    expected = load_fixture("fixtures/sample_todo.json")
+
+    class TokenRequest:
+        def __init__(self, *_args):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    monkeypatch.setattr(orchestrator_module, "CanvasTokenRequest", TokenRequest)
+    monkeypatch.setattr(
+        orchestrator_module,
+        "fetch_live",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            CanvasError("SESSION_EXPIRED", "expired", exit_code=2)
+        ),
+    )
+    monkeypatch.setattr(provider, "_fetch_canvas_session", lambda _target: expected)
+
+    assert provider.fetch_canvas(TARGET) is expected
+
+
+def test_canvas_auth_check_reports_working_token(tmp_path: Path, monkeypatch) -> None:
+    class Vault:
+        def get_many(self, names):
+            return {"CANVAS_ACCESS_TOKEN": "test-canvas-token"}
+
+    settings = load_settings(tmp_path / "missing.env", secret_vault=Vault())
+
+    class TokenRequest:
+        def __init__(self, *_args):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    checked = []
+    monkeypatch.setattr(orchestrator_module, "CanvasTokenRequest", TokenRequest)
+    monkeypatch.setattr(
+        orchestrator_module,
+        "verify_session",
+        lambda request, base_url: checked.append((request, base_url)),
+    )
+
+    assert LiveSourceProvider(settings).check_canvas_auth() == "token"
+    assert len(checked) == 1
+    assert checked[0][1] == "https://issaquah.instructure.com/"
 
 
 def test_prepare_dry_run_makes_one_call_and_writes_nothing(tmp_path: Path) -> None:

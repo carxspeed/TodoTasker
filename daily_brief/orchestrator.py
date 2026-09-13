@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from .atomic import atomic_write_json, atomic_write_text
 from .calendar import build_calendar_snapshot, fetch_ical
 from .canvas import (
+    CanvasError,
     CanvasTokenRequest,
     ensure_canvas_session,
     exclude_course_assignments,
@@ -19,6 +20,7 @@ from .canvas import (
     load_fixture,
     open_saved_canvas_context,
     save_canvas_session,
+    verify_session,
 )
 from .classifier import classify
 from .config import Settings
@@ -66,20 +68,7 @@ class LiveSourceProvider:
         self.fixture = fixture
         self.profile = profile
 
-    def fetch_canvas(self, target_date: date) -> CanvasEnvelope:
-        if self.fixture:
-            return load_fixture(self.fixture)
-        if self.settings.canvas_access_token:
-            with CanvasTokenRequest(
-                str(self.settings.canvas_base), self.settings.canvas_access_token
-            ) as request:
-                return fetch_live(
-                    request,
-                    str(self.settings.canvas_base),
-                    target_date,
-                    self.settings.timezone,
-                    excluded_course_ids=self.settings.canvas_excluded_course_ids,
-                )
+    def _fetch_canvas_session(self, target_date: date) -> CanvasEnvelope:
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as playwright:
@@ -93,6 +82,48 @@ class LiveSourceProvider:
                     self.settings.timezone,
                     excluded_course_ids=self.settings.canvas_excluded_course_ids,
                 )
+
+    def fetch_canvas(self, target_date: date) -> CanvasEnvelope:
+        if self.fixture:
+            return load_fixture(self.fixture)
+        if self.settings.canvas_access_token:
+            try:
+                with CanvasTokenRequest(
+                    str(self.settings.canvas_base), self.settings.canvas_access_token
+                ) as request:
+                    return fetch_live(
+                        request,
+                        str(self.settings.canvas_base),
+                        target_date,
+                        self.settings.timezone,
+                        excluded_course_ids=self.settings.canvas_excluded_course_ids,
+                    )
+            except CanvasError as exc:
+                if exc.code not in {"CANVAS_TOKEN_INVALID", "SESSION_EXPIRED"}:
+                    raise
+        return self._fetch_canvas_session(target_date)
+
+    def check_canvas_auth(self) -> str:
+        """Return the working auth method without exposing account or credential data."""
+        token_failed = False
+        if self.settings.canvas_access_token:
+            try:
+                with CanvasTokenRequest(
+                    str(self.settings.canvas_base), self.settings.canvas_access_token
+                ) as request:
+                    verify_session(request, str(self.settings.canvas_base))
+                return "token"
+            except CanvasError as exc:
+                if exc.code not in {"CANVAS_TOKEN_INVALID", "SESSION_EXPIRED"}:
+                    raise
+                token_failed = True
+
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as playwright:
+            with open_saved_canvas_context(playwright, self.profile) as context:
+                ensure_canvas_session(context, str(self.settings.canvas_base))
+        return "session_fallback" if token_failed else "session"
 
     def fetch_notion(self) -> NotionSnapshot:
         if not self.settings.notion_token or not self.settings.notion_databases_configured:

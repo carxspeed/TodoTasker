@@ -6,6 +6,7 @@ import ctypes
 import getpass
 import json
 import os
+import re
 import subprocess
 from ctypes import wintypes
 from pathlib import Path
@@ -158,6 +159,34 @@ def restrict_windows_acl(path: Path) -> None:
     )
     if completed.returncode:
         raise SecretVaultError("Windows could not restrict access to the secret vault")
+
+
+def windows_acl_is_restricted(path: Path) -> bool:
+    """Return whether Allow entries are limited to this user and LocalSystem."""
+    if os.name != "nt" or not path.exists():
+        return False
+    completed = subprocess.run(
+        ["icacls", str(path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if completed.returncode:
+        raise SecretVaultError("Windows could not inspect secret vault permissions")
+    identities: set[str] = set()
+    for index, raw_line in enumerate(completed.stdout.splitlines()):
+        line = raw_line.strip()
+        if index == 0 and line.casefold().startswith(str(path).casefold()):
+            line = line[len(str(path)) :].strip()
+        match = re.match(r"^(?P<identity>.+?):\(", line)
+        if match:
+            identities.add(match.group("identity").casefold())
+    expected = {
+        _current_windows_principal().casefold(),
+        "nt authority\\system",
+    }
+    return identities == expected
 
 
 class SecretVault:

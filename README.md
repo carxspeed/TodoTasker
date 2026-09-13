@@ -74,7 +74,7 @@ Ollama normally serves its local API at `http://localhost:11434`. Evening check-
 
 See the [official Ollama Windows documentation](https://docs.ollama.com/windows) for installation and service details.
 
-## 4. Create the private configuration file
+## 4. Create the configuration file and encrypted secret vault
 
 Copy the example file and open the copy:
 
@@ -83,26 +83,41 @@ Copy-Item .env.example .env
 notepad .env
 ```
 
-Never commit, paste, screenshot, or share `.env`. It contains account credentials and private feed URLs. The repository already ignores it.
+`.env` contains only non-secret settings and blank placeholders. TodoTasker refuses to
+start if a secret value is left there. Store each secret through a hidden prompt in
+the Windows user-scoped encrypted vault instead:
+
+```powershell
+venv\Scripts\python.exe manage_secrets.py set TELEGRAM_BOT_TOKEN
+venv\Scripts\python.exe manage_secrets.py set NOTION_TOKEN
+venv\Scripts\python.exe manage_secrets.py set ICAL_URL
+```
+
+The prompt does not echo the value. Windows DPAPI encrypts the vault so it can be
+decrypted only by this Windows user, and its permissions allow only this user and
+LocalSystem. The vault is stored outside the repository under
+`%LOCALAPPDATA%\TodoTasker`. Never paste a secret into chat or place it directly on a
+command line.
 
 The main settings are:
 
 | Setting | Purpose | Needed |
 |---|---|---|
-| `NOTION_TOKEN` | Secret for the Notion internal integration | Yes |
+| `NOTION_TOKEN` | Secret for the Notion internal integration; store in the encrypted vault | Yes |
 | `NOTION_PARENT_PAGE_ID` | ID of the Notion page that will contain the four task databases | Yes |
 | `NOTION_WORK_DB_ID` | Work database ID, created automatically by `setup_notion_db.py` | Later |
 | `NOTION_SCHOOL_DB_ID` | School database ID, created automatically | Later |
 | `NOTION_CONNECTIONS_DB_ID` | Connections database ID, created automatically | Later |
 | `NOTION_MISC_DB_ID` | Misc database ID, created automatically | Later |
-| `TELEGRAM_BOT_TOKEN` | Token issued by BotFather | Yes |
+| `TELEGRAM_BOT_TOKEN` | Token issued by BotFather; store in the encrypted vault | Yes |
 | `TELEGRAM_CHAT_ID` | Your numeric Telegram conversation ID | Created automatically |
-| `ICAL_URL` | Google Calendar secret iCal URL | Yes |
+| `ICAL_URL` | Google Calendar secret iCal URL; store in the encrypted vault | Yes |
 | `CANVAS_BASE` | Canvas base URL, without a trailing slash | Yes |
+| `CANVAS_ACCESS_TOKEN` | Preferred unattended Canvas credential; store in the encrypted vault | Recommended |
 | `TIMEZONE` | IANA time zone used for scheduling | Yes |
 | `OLLAMA_MODEL` | Exact local model name reported by `ollama list` | Yes |
 | `OLLAMA_BASE_URL` | Ollama API address | Yes |
-| `ANTHROPIC_API_KEY` | Optional remote model key for morning guidance | No |
+| `ANTHROPIC_API_KEY` | Optional remote model key; store in the encrypted vault | No |
 | `ANTHROPIC_MODEL` | Optional Anthropic model name | No |
 
 Keep the school-hours and pattern settings from `.env.example` unless you intentionally want to customize scheduling or calendar classification.
@@ -115,15 +130,14 @@ Telegram bots cannot start a conversation with a user, so you must message the b
 2. Send `/newbot`.
 3. Choose a display name.
 4. Choose a unique username that ends in `bot`.
-5. Copy the token BotFather returns into `.env`:
+5. Store the token BotFather returns through the hidden local prompt:
 
-   ```dotenv
-   TELEGRAM_BOT_TOKEN=replace_with_your_token
-   TELEGRAM_CHAT_ID=
+   ```powershell
+   venv\Scripts\python.exe manage_secrets.py set TELEGRAM_BOT_TOKEN
    ```
 
 6. Open your new bot, press **Start**, and send it a message such as `hello`.
-7. Save `.env`, then let the setup helper discover and store the chat ID:
+7. Let the setup helper discover and store the non-secret chat ID in `.env`:
 
    ```powershell
    venv\Scripts\python.exe setup_telegram.py
@@ -131,12 +145,15 @@ Telegram bots cannot start a conversation with a user, so you must message the b
 
 `TELEGRAM_CHAT_ID` is the numeric ID of the private conversation where the bot sends prompts and briefs. The script reads your latest bot update, checks for a conflicting webhook, and writes the ID to `.env`; you do not need to guess it.
 
-If a bot token is ever exposed, revoke it with BotFather, generate a replacement, and update `.env`. The [official Telegram bot tutorial](https://core.telegram.org/bots/tutorial) explains token creation and bot setup.
+If a bot token is ever exposed, revoke it with BotFather, generate a replacement,
+and rerun the `manage_secrets.py set TELEGRAM_BOT_TOKEN` command. The [official
+Telegram bot tutorial](https://core.telegram.org/bots/tutorial) explains token
+creation and bot setup.
 
 ## 6. Create and connect the Notion integration
 
 1. Follow Notion's [internal integration quickstart](https://developers.notion.com/guides/get-started/quick-start) to create an integration named `Todo Agent` in your workspace.
-2. Copy its internal integration secret into `.env` as `NOTION_TOKEN`.
+2. Store its internal integration secret with `venv\Scripts\python.exe manage_secrets.py set NOTION_TOKEN`.
 3. In Notion, create or open a page named **To Do List**.
 4. Open that page's connection/integration menu and add `Todo Agent`. Creating an integration does not automatically give it access to your pages.
 5. Copy the page URL. Its page ID is the 32-character hexadecimal value in the URL; hyphens are accepted. Put it in `.env` as `NOTION_PARENT_PAGE_ID`.
@@ -171,15 +188,15 @@ Use the calendar's private iCalendar address, not its normal browser URL:
 2. Under **Settings for my calendars**, select the calendar.
 3. Open **Integrate calendar**.
 4. Copy **Secret address in iCal format**.
-5. Paste it into `.env`:
+5. Store it through the hidden local prompt:
 
-   ```dotenv
-   ICAL_URL=https://calendar.google.com/calendar/ical/your_private_feed/basic.ics
+   ```powershell
+   venv\Scripts\python.exe manage_secrets.py set ICAL_URL
    ```
 
-Google documents these steps under [View your calendar in other applications](https://support.google.com/calendar/answer/37648). Treat the secret address like a password. If it is exposed, reset it in Google Calendar and update `.env`.
+Google documents these steps under [View your calendar in other applications](https://support.google.com/calendar/answer/37648). Treat the secret address like a password. If it is exposed, reset it in Google Calendar and store the replacement in the encrypted vault.
 
-## 8. Sign in to Canvas
+## 8. Configure unattended Canvas access
 
 Confirm the Canvas site in `.env`. This repository defaults to:
 
@@ -213,27 +230,46 @@ work marked `unsubmitted` even after it was handed in.
 Briefs display the Canvas course beneath each assignment and render assignment
 deadlines in the configured local timezone, including its timezone abbreviation.
 
-Start the one-time interactive login:
+The preferred method is a Canvas access token. In Canvas account settings, create a
+personal access token for TodoTasker if your school permits it, then store it through
+the hidden prompt and verify it:
+
+```powershell
+venv\Scripts\python.exe manage_secrets.py set CANVAS_ACCESS_TOKEN
+venv\Scripts\python.exe canvas.py auth-check
+```
+
+The token is sent only to the exact HTTPS origin configured by `CANVAS_BASE`. It is
+removed on any cross-origin redirect and cleared from the in-memory client when the
+request finishes.
+
+As a fallback, create an encrypted browser session with the one-time interactive
+login:
 
 ```powershell
 venv\Scripts\python.exe canvas.py login
 ```
 
-Complete Microsoft SSO in the opened Chromium window. Return to PowerShell and press Enter when prompted, allow the script to finish saving the local profile, and close the browser cleanly.
+Complete Microsoft SSO in the opened Chromium window, return to PowerShell, and
+press Enter. TodoTasker verifies Canvas before saving the session.
 
-The saved Playwright browser profile and `profile\storage-state.json` contain sensitive session data and are ignored by Git. Protect them like `.env`. If Canvas later reports an expired session, run the login command again. If login reports that the profile is already in use, close all Chromium windows opened by the tasker and retry.
-
-Successful Canvas reads persist refreshed cookies back to `storage-state.json`. If
-the Canvas session cookie expires, the tasker first follows the district's
-Microsoft SSO route headlessly and renews Canvas using the saved Microsoft
-session. Manual login is only required when Microsoft itself expires the account
-session or requires interactive authentication such as MFA.
+The browser session is encrypted with Windows DPAPI and stored outside the
+repository at `%LOCALAPPDATA%\TodoTasker\canvas-session.dpapi`. It is decrypted only
+in memory; TodoTasker does not retain a Chromium profile or plaintext
+`storage-state.json`. Reads try the Canvas token first and fall back to the encrypted
+session if the token stops working. The scheduled authentication check warns you in
+Telegram before the nightly workflow if all unattended methods fail. An expired
+browser session still requires another interactive `canvas.py login`; your Microsoft
+password is never stored by TodoTasker.
 
 ## 9. Verify each read-only connection
 
-These commands fetch and summarize data but do not create Notion pages or send Telegram messages:
+These commands verify security and fetch or summarize data without creating Notion
+pages or sending Telegram messages:
 
 ```powershell
+venv\Scripts\python.exe manage_secrets.py audit
+venv\Scripts\python.exe canvas.py auth-check
 venv\Scripts\python.exe canvas.py fetch
 venv\Scripts\python.exe notion_api.py
 venv\Scripts\python.exe calendar_feed.py --target-date (Get-Date -Format 'yyyy-MM-dd')
@@ -300,6 +336,7 @@ The installer defines:
 
 | Task | Trigger | Command |
 |---|---:|---|
+| Daily Brief - Canvas Auth Check | 8:30 PM | `canvas.py auth-check --notify` |
 | Daily Brief - Evening Check-in | 9:00 PM | `checkin.py send` |
 | Daily Brief - Process Check-in | 9:30 PM | `checkin.py process` |
 | Daily Brief - Prepare | 9:50 PM | `brief.py prepare` |
@@ -328,11 +365,12 @@ Watch the first three to five days of runs. Confirm that the evening prompt, rep
 
 ## 13. Optional Anthropic morning guidance
 
-Local Ollama is the default. To use Anthropic for bounded morning guidance, set:
+Local Ollama is the default. To use Anthropic for bounded morning guidance, store
+the API key with `venv\Scripts\python.exe manage_secrets.py set ANTHROPIC_API_KEY`,
+then set only the non-secret fields in `.env`:
 
 ```dotenv
 MODEL_PROVIDER=anthropic
-ANTHROPIC_API_KEY=replace_with_your_key
 ANTHROPIC_MODEL=replace_with_a_model_available_to_your_account
 ```
 
@@ -344,7 +382,12 @@ Evening check-ins remain local regardless of this setting. If the remote model i
 # Run tests
 venv\Scripts\python.exe -m pytest
 
-# Refresh the Canvas login
+# Check the vault, permissions, and Canvas authentication
+venv\Scripts\python.exe manage_secrets.py audit
+venv\Scripts\python.exe manage_secrets.py status
+venv\Scripts\python.exe canvas.py auth-check
+
+# Refresh the encrypted Canvas fallback session
 venv\Scripts\python.exe canvas.py login
 
 # Fetch sources without producing a brief
@@ -364,7 +407,10 @@ venv\Scripts\python.exe brief.py watchdog
 
 ### Canvas session expired
 
-Run `venv\Scripts\python.exe canvas.py login` and complete SSO again. If the browser profile is in use, close the tasker's Chromium window before retrying.
+Run `venv\Scripts\python.exe canvas.py auth-check`. If the access token is invalid,
+create a replacement and store it with `manage_secrets.py set CANVAS_ACCESS_TOKEN`.
+If the encrypted fallback session has also expired, run `canvas.py login` and
+complete SSO again.
 
 ### Telegram setup finds no chat
 
@@ -372,7 +418,9 @@ Open the bot in Telegram, press **Start**, send a new message, and rerun `setup_
 
 ### Telegram token or calendar URL was exposed
 
-Revoke and replace the bot token through BotFather. Reset the secret iCal address in Google Calendar. Update `.env` after rotating either credential.
+Revoke and replace the bot token through BotFather. Reset the secret iCal address in
+Google Calendar. Store each replacement with the matching `manage_secrets.py set`
+command.
 
 ### Notion returns 404
 
@@ -401,12 +449,15 @@ Run `venv\Scripts\python.exe brief.py watchdog`, inspect the command output, and
 - Check-in events are recorded append-first before downstream mutation.
 - Ambiguous or malformed check-in replies go to local quarantine instead of updating the wrong item.
 - Raw check-in text is not sent to the morning remote-model path.
-- `.env`, runtime state, browser profiles, source caches, generated briefs, private captures, incidents, and quarantined replies are ignored by Git.
+- `.env` contains no secret values; live credentials are held in a Windows user-scoped DPAPI vault outside the repository.
+- The Canvas fallback session is also DPAPI-encrypted outside the repository; no persistent browser profile or plaintext storage state is retained.
+- `manage_secrets.py audit` detects plaintext `.env` secrets, unsafe vault/session permissions, legacy browser state, and copies of configured secrets in repository files without printing their values.
+- Runtime state, source caches, generated briefs, private captures, incidents, and quarantined replies are ignored by Git.
 - `--dry-run` performs no writes or deliveries.
 
 ## Disable or remove scheduling
 
-To pause the system without deleting local state, disable the five **Daily Brief** tasks in Windows Task Scheduler.
+To pause the system without deleting local state, disable the six **Daily Brief** tasks in Windows Task Scheduler.
 
 Before removing anything, list the exact matching tasks:
 
@@ -416,7 +467,10 @@ Get-ScheduledTask |
     Select-Object TaskName, State
 ```
 
-After verifying the names, remove those exact tasks in Task Scheduler or with `Unregister-ScheduledTask` one at a time. The repository's state and account credentials are not deleted when scheduled tasks are disabled or removed.
+After verifying the names, remove those exact tasks in Task Scheduler or with
+`Unregister-ScheduledTask` one at a time. The repository state, encrypted vault, and
+encrypted Canvas session are not deleted when scheduled tasks are disabled or
+removed.
 
 ## Development
 

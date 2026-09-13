@@ -9,6 +9,7 @@ from pathlib import Path
 from dotenv import dotenv_values
 
 from daily_brief.envfile import blank_env_values
+from daily_brief.security_audit import run_security_audit
 from daily_brief.secret_vault import SECRET_NAMES, SecretVault, SecretVaultError
 
 
@@ -25,6 +26,7 @@ def parse_args() -> argparse.Namespace:
         "migrate-env",
         help="encrypt current .env secrets, verify them, then blank the plaintext values",
     )
+    commands.add_parser("audit", help="check for plaintext secrets and unsafe permissions")
     return parser.parse_args()
 
 
@@ -65,6 +67,14 @@ def main() -> int:
                 print("Encrypted and removed from .env: " + ", ".join(migrated))
             else:
                 print("No plaintext secrets were found in .env.")
+        elif args.command == "audit":
+            issues = run_security_audit(Path.cwd(), args.env_file, vault)
+            if issues:
+                print("security_audit=failed")
+                for issue in issues:
+                    print(f"- {issue}")
+                return 1
+            print("security_audit=ok")
         else:
             configured = set(vault.configured())
             for name in sorted(SECRET_NAMES):

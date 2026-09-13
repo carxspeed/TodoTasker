@@ -28,7 +28,8 @@ The rendered brief is saved locally before delivery, then upserted into a system
 
 ## Operational commands
 
-- `canvas.py login|fetch`
+- `canvas.py login|fetch|auth-check|migrate-session`
+- `manage_secrets.py set|delete|status|migrate-env|audit`
 - `setup_notion_db.py`
 - `brief.py prepare|deliver|watchdog`
 - `checkin.py send|process`

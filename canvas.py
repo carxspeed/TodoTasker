@@ -10,17 +10,15 @@ from zoneinfo import ZoneInfo
 
 from daily_brief.canvas import (
     CanvasError,
-    CanvasTokenRequest,
-    ensure_canvas_session,
     exclude_course_assignments,
-    fetch_live,
     load_fixture,
     migrate_legacy_canvas_session,
-    open_saved_canvas_context,
     save_canvas_session,
     verify_session,
 )
 from daily_brief.config import ConfigurationError, load_settings
+from daily_brief.orchestrator import LiveSourceProvider
+from daily_brief.telegram import TelegramClient
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,6 +33,9 @@ def parse_args() -> argparse.Namespace:
     migrate = sub.add_parser("migrate-session")
     migrate.add_argument("--legacy-profile", type=Path, default=Path("profile"))
     migrate.add_argument("--profile", type=Path)
+    auth_check = sub.add_parser("auth-check")
+    auth_check.add_argument("--profile", type=Path)
+    auth_check.add_argument("--notify", action="store_true")
     return parser.parse_args()
 
 
@@ -61,24 +62,37 @@ def main() -> int:
             )
             print(envelope.model_dump_json())
             return 0
-        if args.command == "fetch" and settings.canvas_access_token:
-            with CanvasTokenRequest(
-                str(settings.canvas_base), settings.canvas_access_token
-            ) as request:
-                effective_date = target_date or datetime.now(
-                    ZoneInfo(settings.timezone)
-                ).date()
-                envelope = fetch_live(
-                    request,
-                    str(settings.canvas_base),
-                    effective_date,
-                    settings.timezone,
-                    excluded_course_ids=settings.canvas_excluded_course_ids,
+        if args.command == "auth-check":
+            method = LiveSourceProvider(settings, profile=args.profile).check_canvas_auth()
+            if (
+                method == "session_fallback"
+                and args.notify
+                and settings.telegram_bot_token
+                and settings.telegram_chat_id
+            ):
+                result = TelegramClient(
+                    settings.telegram_bot_token, settings.telegram_chat_id
+                ).send_plain(
+                    "TodoTasker: the Canvas token needs replacement. The encrypted "
+                    "browser session is still working, so briefs will continue."
                 )
-                envelope = exclude_course_assignments(
-                    envelope, settings.canvas_excluded_course_ids
-                )
-                print(envelope.model_dump_json())
+                if not result.success:
+                    raise CanvasError(
+                        "CANVAS_AUTH_NOTIFICATION_FAILED",
+                        "Canvas fallback worked but Telegram notification failed",
+                    )
+            print(f"canvas_auth={method}")
+        elif args.command == "fetch":
+            effective_date = target_date or datetime.now(
+                ZoneInfo(settings.timezone)
+            ).date()
+            envelope = LiveSourceProvider(settings, profile=args.profile).fetch_canvas(
+                effective_date
+            )
+            envelope = exclude_course_assignments(
+                envelope, settings.canvas_excluded_course_ids
+            )
+            print(envelope.model_dump_json())
         else:
             from playwright.sync_api import sync_playwright
 
@@ -101,26 +115,24 @@ def main() -> int:
                     finally:
                         context.close()
                         browser.close()
-                else:
-                    with open_saved_canvas_context(playwright, args.profile) as context:
-                        ensure_canvas_session(context, str(settings.canvas_base))
-                        save_canvas_session(context, args.profile)
-                        effective_date = target_date or datetime.now(
-                            ZoneInfo(settings.timezone)
-                        ).date()
-                        envelope = fetch_live(
-                            context.request,
-                            str(settings.canvas_base),
-                            effective_date,
-                            settings.timezone,
-                            excluded_course_ids=settings.canvas_excluded_course_ids,
-                        )
-                        envelope = exclude_course_assignments(
-                            envelope, settings.canvas_excluded_course_ids
-                        )
-                        print(envelope.model_dump_json())
         return 0
     except (ConfigurationError, CanvasError) as exc:
+        if (
+            args.command == "auth-check"
+            and args.notify
+            and "settings" in locals()
+            and settings.telegram_bot_token
+            and settings.telegram_chat_id
+        ):
+            result = TelegramClient(
+                settings.telegram_bot_token, settings.telegram_chat_id
+            ).send_plain(
+                "TodoTasker needs attention: Canvas authentication could not be "
+                "renewed automatically. Run canvas.py login when convenient."
+            )
+            if result.success:
+                print("canvas_auth=action_required_notified")
+                return 0
         print(exc)
         return exc.exit_code if isinstance(exc, CanvasError) else 1
 
