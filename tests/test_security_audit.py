@@ -40,6 +40,25 @@ def test_clean_repository_audit_reports_no_issues(tmp_path: Path) -> None:
     assert issues == []
 
 
+def test_canvas_token_does_not_require_browser_fallback_session(tmp_path: Path) -> None:
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    env = repository / ".env"
+    env.write_text("CANVAS_ACCESS_TOKEN=\n", encoding="utf-8")
+    vault = make_vault(tmp_path / "appdata" / "secrets.dpapi")
+    vault.set("CANVAS_ACCESS_TOKEN", "live-canvas-token")
+
+    issues = run_security_audit(
+        repository,
+        env,
+        vault,
+        canvas_session=tmp_path / "missing-session.dpapi",
+        acl_check=lambda _: True,
+    )
+
+    assert issues == []
+
+
 def test_audit_names_exposures_without_repeating_secret(tmp_path: Path) -> None:
     repository = tmp_path / "repo"
     repository.mkdir()

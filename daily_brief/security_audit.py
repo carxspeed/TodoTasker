@@ -57,9 +57,9 @@ def run_security_audit(
             issues.append("encrypted secret vault permissions are too broad")
 
     session_path = canvas_session or canvas_storage_state_path()
-    if not session_path.exists():
+    if not session_path.exists() and not secrets.get("CANVAS_ACCESS_TOKEN"):
         issues.append("encrypted Canvas session is missing")
-    else:
+    elif session_path.exists():
         try:
             header = session_path.read_bytes()[: len(CANVAS_STATE_MAGIC)]
         except OSError:
