@@ -13,6 +13,7 @@ from .secret_vault import SECRET_NAMES, SecretVault, windows_acl_is_restricted
 
 EXCLUDED_PARTS = {
     ".git",
+    ".private",
     ".pytest_cache",
     ".venv",
     "__pycache__",

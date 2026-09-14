@@ -124,10 +124,9 @@ def dpapi_unprotect(ciphertext: bytes) -> bytes:
 
 
 def default_vault_path() -> Path:
-    local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
-    if not local_app_data:
-        raise SecretVaultError("LOCALAPPDATA is unavailable")
-    return Path(local_app_data).resolve() / "TodoTasker" / "secrets.dpapi"
+    """Return a persistent path shared by interactive and scheduled executions."""
+    project_root = Path(__file__).resolve().parent.parent
+    return project_root / ".private" / "secrets.dpapi"
 
 
 def _current_windows_principal() -> str:

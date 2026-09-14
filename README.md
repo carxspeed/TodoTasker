@@ -95,8 +95,9 @@ venv\Scripts\python.exe manage_secrets.py set ICAL_URL
 
 The prompt does not echo the value. Windows DPAPI encrypts the vault so it can be
 decrypted only by this Windows user, and its permissions allow only this user and
-LocalSystem. The vault is stored outside the repository under
-`%LOCALAPPDATA%\TodoTasker`. Never paste a secret into chat or place it directly on a
+LocalSystem. The ciphertext is stored under the repository's Git-ignored
+`.private` directory so interactive commands and Windows Task Scheduler use the same
+persistent file view. Never paste a secret into chat or place it directly on a
 command line.
 
 If your terminal cannot accept hidden input, start the one-time local setup page:
@@ -263,9 +264,9 @@ venv\Scripts\python.exe canvas.py login
 Complete Microsoft SSO in the opened Chromium window, return to PowerShell, and
 press Enter. TodoTasker verifies Canvas before saving the session.
 
-The browser session is encrypted with Windows DPAPI and stored outside the
-repository at `%LOCALAPPDATA%\TodoTasker\canvas-session.dpapi`. It is decrypted only
-in memory; TodoTasker does not retain a Chromium profile or plaintext
+The browser session is encrypted with Windows DPAPI and stored at
+`.private\canvas-session.dpapi`. It is decrypted only in memory; TodoTasker does not
+retain a Chromium profile or plaintext
 `storage-state.json`. Reads try the Canvas token first and fall back to the encrypted
 session if the token stops working. The scheduled authentication check warns you in
 Telegram before the nightly workflow if all unattended methods fail. An expired
@@ -459,8 +460,8 @@ Run `venv\Scripts\python.exe brief.py watchdog`, inspect the command output, and
 - Check-in events are recorded append-first before downstream mutation.
 - Ambiguous or malformed check-in replies go to local quarantine instead of updating the wrong item.
 - Raw check-in text is not sent to the morning remote-model path.
-- `.env` contains no secret values; live credentials are held in a Windows user-scoped DPAPI vault outside the repository.
-- The Canvas fallback session is also DPAPI-encrypted outside the repository; no persistent browser profile or plaintext storage state is retained.
+- `.env` contains no secret values; live credentials are held in a Windows user-scoped DPAPI vault under the ACL-locked, Git-ignored `.private` directory.
+- The Canvas fallback session is also DPAPI-encrypted under `.private`; no persistent browser profile or plaintext storage state is retained.
 - `manage_secrets.py audit` detects plaintext `.env` secrets, unsafe vault/session permissions, legacy browser state, and copies of configured secrets in repository files without printing their values.
 - Runtime state, source caches, generated briefs, private captures, incidents, and quarantined replies are ignored by Git.
 - `--dry-run` performs no writes or deliveries.

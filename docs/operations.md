@@ -19,8 +19,9 @@ venv\Scripts\python.exe manage_secrets.py set NOTION_TOKEN
 venv\Scripts\python.exe manage_secrets.py set ICAL_URL
 ```
 
-Windows DPAPI encrypts the vault for the current Windows user under
-`%LOCALAPPDATA%\TodoTasker`, outside the repository. Runtime state, caches, generated
+Windows DPAPI encrypts the vault for the current Windows user under the repository's
+ACL-locked, Git-ignored `.private` directory. This deterministic location is shared
+by interactive commands and Windows Task Scheduler. Runtime state, caches, generated
 briefs, incident journals, private captures, and quarantined check-in replies are
 ignored by Git.
 
@@ -36,8 +37,8 @@ after one save or ten minutes.
 4. Prefer a Canvas personal access token stored with `manage_secrets.py set CANVAS_ACCESS_TOKEN`. If no token is available, run `canvas.py login` once to create the encrypted fallback session.
 
 The Canvas token is restricted to the configured Canvas HTTPS origin. The fallback
-browser state is DPAPI-encrypted under `%LOCALAPPDATA%\TodoTasker` and decrypted only
-in memory; no persistent Chromium profile or plaintext storage state is retained.
+browser state is DPAPI-encrypted under `.private` and decrypted only in memory; no
+persistent Chromium profile or plaintext storage state is retained.
 Run `canvas.py auth-check` to verify unattended access.
 
 No live mutation should be attempted until the corresponding fixture and transport-mock tests pass.

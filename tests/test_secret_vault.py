@@ -7,6 +7,7 @@ from daily_brief.secret_vault import (
     SECRET_NAMES,
     SecretVault,
     SecretVaultError,
+    default_vault_path,
     dpapi_protect,
     dpapi_unprotect,
 )
@@ -86,6 +87,18 @@ def test_unknown_secret_names_are_rejected(tmp_path: Path) -> None:
         store.set("MICROSOFT_PASSWORD", "do-not-store-this")
 
     assert "MICROSOFT_PASSWORD" not in SECRET_NAMES
+
+
+def test_default_vault_uses_git_ignored_project_private_directory(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+
+    path = default_vault_path()
+
+    assert path.name == "secrets.dpapi"
+    assert path.parent.name == ".private"
+    assert path.parent.parent == Path(__file__).resolve().parent.parent
 
 
 def test_corrupt_or_plaintext_files_are_rejected(tmp_path: Path) -> None:

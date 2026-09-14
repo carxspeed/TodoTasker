@@ -182,7 +182,6 @@ def load_settings(
             vault is None
             and use_default_vault
             and os.name == "nt"
-            and os.environ.get("LOCALAPPDATA")
         ):
             vault = SecretVault()
         if vault is not None:

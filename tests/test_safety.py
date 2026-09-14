@@ -7,7 +7,7 @@ def test_sensitive_paths_are_ignored() -> None:
         for line in Path(".gitignore").read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     }
-    assert {".env", "profile/", "state/", "fixtures/private/"} <= rules
+    assert {".env", ".private/", "profile/", "state/", "fixtures/private/"} <= rules
 
 
 def test_example_environment_contains_no_credentials() -> None:

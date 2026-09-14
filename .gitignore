@@ -1,4 +1,5 @@
 .env
+.private/
 venv/
 .venv/
 profile/
@@ -16,4 +17,3 @@ build/
 *.egg-info/
 .idea/
 .vscode/
-
