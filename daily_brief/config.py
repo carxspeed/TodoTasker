@@ -51,6 +51,7 @@ class Settings(BaseModel):
 
     notion_token: str = ""
     notion_parent_page_id: str = ""
+    notion_school_page_id: str = ""
     notion_work_db_id: str = ""
     notion_school_db_id: str = ""
     notion_connections_db_id: str = ""
@@ -84,6 +85,7 @@ class Settings(BaseModel):
 
     @field_validator(
         "notion_parent_page_id",
+        "notion_school_page_id",
         "notion_work_db_id",
         "notion_school_db_id",
         "notion_connections_db_id",
@@ -229,6 +231,7 @@ def load_settings(
     payload = {
         "notion_token": values.get("NOTION_TOKEN", ""),
         "notion_parent_page_id": values.get("NOTION_PARENT_PAGE_ID", ""),
+        "notion_school_page_id": values.get("NOTION_SCHOOL_PAGE_ID", ""),
         "notion_work_db_id": values.get("NOTION_WORK_DB_ID", ""),
         "notion_school_db_id": values.get("NOTION_SCHOOL_DB_ID", ""),
         "notion_connections_db_id": values.get("NOTION_CONNECTIONS_DB_ID", ""),

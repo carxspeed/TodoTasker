@@ -12,7 +12,7 @@ from daily_brief.models import (
     GuidanceResult,
     NotionSnapshot,
 )
-from daily_brief.notion import BriefPageResult
+from daily_brief.notion import SchoolSyncResult
 from daily_brief.orchestrator import DailyBriefOrchestrator, LiveSourceProvider
 from daily_brief.state import StateStore
 from daily_brief.telegram import TelegramResult, build_summary
@@ -62,9 +62,9 @@ class NotionDelivery:
     def __init__(self):
         self.calls = 0
 
-    def upsert_brief_page(self, *args, **kwargs):
+    def sync_canvas_assignments(self, *args, **kwargs):
         self.calls += 1
-        return BriefPageResult("page", "https://notion.test/page")
+        return SchoolSyncResult("page", "https://notion.test/page")
 
 
 class Telegram:

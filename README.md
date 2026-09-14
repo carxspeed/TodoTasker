@@ -3,7 +3,7 @@
 Daily Brief is a local-first Windows tasker that combines:
 
 - assignments collected from Canvas;
-- tasks kept in four Notion databases: Work, School, Connections, and Misc;
+- tasks kept in Work, Connections, and Misc databases plus a School page with one table per class;
 - events from a Google Calendar iCalendar feed;
 - an evening check-in and morning brief delivered through Telegram.
 
@@ -115,9 +115,10 @@ The main settings are:
 | Setting | Purpose | Needed |
 |---|---|---|
 | `NOTION_TOKEN` | Secret for the Notion internal integration; store in the encrypted vault | Yes |
-| `NOTION_PARENT_PAGE_ID` | ID of the Notion page that will contain the four task databases | Yes |
+| `NOTION_PARENT_PAGE_ID` | ID of the Notion page that contains the task dashboard | Yes |
+| `NOTION_SCHOOL_PAGE_ID` | School page ID, created automatically by `setup_notion_db.py` | Later |
 | `NOTION_WORK_DB_ID` | Work database ID, created automatically by `setup_notion_db.py` | Later |
-| `NOTION_SCHOOL_DB_ID` | School database ID, created automatically | Later |
+| `NOTION_SCHOOL_DB_ID` | General School table ID, created automatically | Later |
 | `NOTION_CONNECTIONS_DB_ID` | Connections database ID, created automatically | Later |
 | `NOTION_MISC_DB_ID` | Misc database ID, created automatically | Later |
 | `TELEGRAM_BOT_TOKEN` | Token issued by BotFather; store in the encrypted vault | Yes |
@@ -168,13 +169,15 @@ creation and bot setup.
 3. In Notion, create or open a page named **To Do List**.
 4. Open that page's connection/integration menu and add `Todo Agent`. Creating an integration does not automatically give it access to your pages.
 5. Copy the page URL. Its page ID is the 32-character hexadecimal value in the URL; hyphens are accepted. Put it in `.env` as `NOTION_PARENT_PAGE_ID`.
-6. Leave all four `NOTION_*_DB_ID` settings empty, save `.env`, and run:
+6. Leave `NOTION_SCHOOL_PAGE_ID` and all four `NOTION_*_DB_ID` settings empty, save `.env`, and run:
 
    ```powershell
    venv\Scripts\python.exe setup_notion_db.py
    ```
 
-The helper creates or validates four separate databases named **Work**, **School**, **Connections**, and **Misc** below the parent page, then writes each ID to its matching `.env` setting. Every database uses the same schema:
+The helper creates or validates **Work**, **Connections**, and **Misc** databases below the parent page. It also creates a **School** page containing a **General** table. During delivery, TodoTasker creates one additional table per non-excluded Canvas class on that same School page and fills it with assignments. Existing rows from an older top-level School database are copied into School / General before the old table is archived.
+
+Work, Connections, Misc, and School / General use this schema:
 
 - `Name`;
 - `Type`;
@@ -185,7 +188,9 @@ The helper creates or validates four separate databases named **Work**, **School
 - `Deadline`;
 - `Effort`.
 
-The table containing a task is its Area. Telegram check-ins route new tasks to the matching database and the daily brief reads active rows from all four. Canvas assignments are collected automatically, so only add school tasks to **School** when they are not represented in Canvas.
+Each class table contains the assignment name, due time, status, priority, effort, kind, next step, extracted instructions, Canvas link, and stable Canvas ID. Repeated runs update matching rows instead of duplicating them. The excluded DECA course is never synchronized.
+
+The table containing a manual task is its Area. Telegram check-ins route new tasks to the matching database and the daily brief reads active rows from all four logical areas. Add non-Canvas school tasks to **School / General**.
 
 Add three to five real active items across the four databases so the first brief has useful data. Keep each row's `Name`, `Status`, and `Next step` current.
 
@@ -304,7 +309,7 @@ venv\Scripts\python.exe brief.py prepare `
 
 ## 11. Run the first live morning cycle
 
-The following commands are intentionally live. `prepare` updates local state and creates or updates the day's Notion brief. `deliver` sends it through Telegram.
+The following commands are intentionally live. `prepare` updates local state. `deliver` synchronizes Canvas assignments into the per-class School tables and sends the brief through Telegram.
 
 ```powershell
 $Today = Get-Date -Format 'yyyy-MM-dd'
@@ -315,11 +320,11 @@ venv\Scripts\python.exe brief.py deliver --target-date $Today
 Verify that:
 
 - a generated Markdown brief exists under `state\briefs`;
-- exactly one brief page exists in Notion for the date;
+- each Canvas class has one table on the School page and its assignments are present;
 - one morning message arrived in Telegram;
-- the Telegram button opens the expected Notion page.
+- the Telegram button opens the To Do List dashboard.
 
-Run the same two commands once more. The system should reuse the same logical brief rather than create duplicate pages or messages.
+Run the same two commands once more. The system should update matching School rows and reuse the same Telegram message rather than create duplicates.
 
 Test the evening check-in separately:
 
@@ -435,7 +440,7 @@ command.
 
 ### Notion returns 404
 
-Verify `NOTION_PARENT_PAGE_ID` and all four `NOTION_*_DB_ID` settings, then confirm the relevant page/database is shared with the internal integration.
+Verify `NOTION_PARENT_PAGE_ID`, `NOTION_SCHOOL_PAGE_ID`, and all four `NOTION_*_DB_ID` settings, then confirm the parent page is shared with the internal integration.
 
 ### Ollama is unavailable
 
@@ -456,7 +461,7 @@ Run `venv\Scripts\python.exe brief.py watchdog`, inspect the command output, and
 
 - Generated Markdown briefs remain in `state\briefs` even if both remote deliveries fail.
 - A corrupt `state\state.json` can restore from `state\state.json.bak`; if both are unusable, the app rebuilds safe defaults while preserving compatible configuration.
-- Writes use target-specific idempotency so retries do not normally duplicate a Notion page or Telegram delivery.
+- School rows use stable Canvas IDs and sync hashes so retries do not duplicate assignments; Telegram delivery remains idempotent.
 - Check-in events are recorded append-first before downstream mutation.
 - Ambiguous or malformed check-in replies go to local quarantine instead of updating the wrong item.
 - Raw check-in text is not sent to the morning remote-model path.

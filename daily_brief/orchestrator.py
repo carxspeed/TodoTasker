@@ -39,7 +39,7 @@ from .models import (
     PreparedSources,
     SeenAssignment,
 )
-from .notion import NotionClient, NotionTaskStore
+from .notion import NotionSchoolBoard, NotionTaskStore
 from .render import deterministic_guidance, render_brief
 from .runtime import SourceCache, alert_incident, normalized_hash, resolve_incident_dir
 from .state import StateStore
@@ -161,7 +161,7 @@ class DailyBriefOrchestrator:
         cache: SourceCache | None = None,
         state_dir: str | Path = "state",
         guidance_call: Callable[..., GuidanceResult | None] = generate_guidance,
-        notion_delivery: NotionClient | None = None,
+        notion_delivery: NotionSchoolBoard | None = None,
         telegram: TelegramClient | None = None,
     ) -> None:
         self.settings = settings
@@ -504,14 +504,38 @@ class DailyBriefOrchestrator:
         delivery = state.deliveries.setdefault(target_date.isoformat(), DeliveryRecord())
         delivery.brief_hash = brief_hash
         notion_url = None
-        if self.notion_delivery is not None:
+        if self.notion_delivery is not None and bundle.canvas is not None:
             try:
-                notion_result = self.notion_delivery.upsert_brief_page(
-                    target_date,
-                    text,
-                    journal_dir=self.state_dir / "notion_updates",
-                    stored_page_id=delivery.notion_page_id,
-                    stored_url=delivery.notion_url or "",
+                guidance_by_key = (
+                    {item.key: item.guidance for item in guidance.task_guidance}
+                    if guidance
+                    else {}
+                )
+                details_by_key: dict[str, dict[str, str]] = {}
+                for priority, items in (
+                    ("MUST", classification.must),
+                    ("SMART", classification.smart),
+                    ("MAY", classification.may),
+                ):
+                    for item in items:
+                        details_by_key[item.key] = {
+                            "Priority": priority,
+                            "Effort": item.effort,
+                            "Next step": guidance_by_key.get(item.key)
+                            or deterministic_guidance(item),
+                        }
+                for item in classification.verify:
+                    details_by_key.setdefault(
+                        item.key,
+                        {
+                            "Priority": "Verify",
+                            "Next step": "Confirm whether this Canvas item is still unfinished.",
+                        },
+                    )
+                notion_result = self.notion_delivery.sync_canvas_assignments(
+                    bundle.canvas.assignments,
+                    details_by_key=details_by_key,
+                    excluded_course_ids=self.settings.canvas_excluded_course_ids,
                 )
                 delivery.notion_page_id = notion_result.page_id
                 delivery.notion_url = notion_result.url

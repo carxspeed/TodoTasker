@@ -24,7 +24,7 @@ Rendered Canvas tasks include their course name, and aware assignment deadlines 
 
 Canvas guidance receives up to 800 characters of enriched assignment instructions under a source-specific field and must never reuse the Notion-only “Next step unknown” response.
 
-The rendered brief is saved locally before delivery, then upserted into a system-owned Notion page and sent as a boundary-safe Telegram summary. The evening check-in polls Telegram, applies conservatively matched updates through a replayable journal, and records next-day capacity only when the user states it.
+The rendered brief is saved locally before delivery. Canvas assignments are then synchronized into one table per class on the Notion School page, while manual tasks remain in Work, School / General, Connections, or Misc. Telegram receives a boundary-safe summary whose button opens the task dashboard. The evening check-in polls Telegram, applies conservatively matched updates through a replayable journal, and records next-day capacity only when the user states it.
 
 ## Operational commands
 

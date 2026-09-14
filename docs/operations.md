@@ -31,7 +31,7 @@ after one save or ten minutes.
 
 ## Live-service prerequisites
 
-1. Share the Notion “To Do List” parent page with the “Todo Agent” integration, place its 32-character page id in `.env`, store its integration secret with `manage_secrets.py set NOTION_TOKEN`, then run `setup_notion_db.py` to create or validate the Work, School, Connections, and Misc databases.
+1. Share the Notion “To Do List” parent page with the “Todo Agent” integration, place its 32-character page id in `.env`, store its integration secret with `manage_secrets.py set NOTION_TOKEN`, then run `setup_notion_db.py`. It creates Work, Connections, and Misc databases plus a School page containing General and per-class Canvas tables.
 2. Create a Telegram bot, send it one message, then use `getUpdates` once to determine the chat id.
 3. Store the Google Calendar secret iCal address with `manage_secrets.py set ICAL_URL`.
 4. Prefer a Canvas personal access token stored with `manage_secrets.py set CANVAS_ACCESS_TOKEN`. If no token is available, run `canvas.py login` once to create the encrypted fallback session.

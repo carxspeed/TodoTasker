@@ -89,6 +89,7 @@ def test_notion_ids_are_normalized(tmp_path: Path) -> None:
     write_env(
         env,
         NOTION_PARENT_PAGE_ID=value,
+        NOTION_SCHOOL_PAGE_ID=value,
         NOTION_WORK_DB_ID=value,
         NOTION_SCHOOL_DB_ID=value,
         NOTION_CONNECTIONS_DB_ID=value,
@@ -96,6 +97,7 @@ def test_notion_ids_are_normalized(tmp_path: Path) -> None:
     )
     settings = load_settings(env)
     assert settings.notion_parent_page_id == "0123456789abcdef0123456789abcdef"
+    assert settings.notion_school_page_id == "0123456789abcdef0123456789abcdef"
     assert settings.notion_databases_configured
     assert set(settings.notion_database_ids) == {"Work", "School", "Connections", "Misc"}
 

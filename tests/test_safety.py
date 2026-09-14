@@ -19,6 +19,7 @@ def test_example_environment_contains_no_credentials() -> None:
     for key in (
         "NOTION_TOKEN",
         "NOTION_PARENT_PAGE_ID",
+        "NOTION_SCHOOL_PAGE_ID",
         "NOTION_WORK_DB_ID",
         "NOTION_SCHOOL_DB_ID",
         "NOTION_CONNECTIONS_DB_ID",

@@ -33,7 +33,7 @@ def test_summary_truncates_only_at_item_boundaries() -> None:
     summary = build_summary(full, "https://notion.test/brief")
     assert len(summary.text) <= SUMMARY_LIMIT
     assert summary.omitted_items > 0
-    assert "open the full brief" in summary.text
+    assert "open the task tables" in summary.text
     assert not summary.text.endswith("x")
 
 
@@ -51,6 +51,7 @@ def test_send_uses_json_plain_text_and_validates_api_ok() -> None:
     assert result.success and result.message_id == 42
     payload = session.calls[0][1]["json"]
     assert "parse_mode" not in payload
+    assert payload["reply_markup"]["inline_keyboard"][0][0]["text"] == "Open task tables"
     assert payload["reply_markup"]["inline_keyboard"][0][0]["url"] == "https://notion.test"
 
     failed = TelegramClient(
@@ -73,4 +74,3 @@ def test_edit_not_modified_is_success() -> None:
         session=Session(Response({"ok": False, "description": "Bad Request: message is not modified"}, 400)),
     ).edit_brief(9, "Header", None, local_path=Path("brief.md"))[1]
     assert result.success and result.message_id == 9
-

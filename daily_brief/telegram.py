@@ -96,7 +96,7 @@ def build_summary(
         if omitted_sections:
             counts.append(f"+{omitted_sections} additional section{'s' if omitted_sections != 1 else ''}")
         if notion_url:
-            footer = " and ".join(counts) + " — open the full brief"
+            footer = " and ".join(counts) + " — open the task tables"
         else:
             footer = (
                 " and ".join(counts)
@@ -120,7 +120,7 @@ class TelegramClient:
         if not notion_url:
             return None
         return {
-            "inline_keyboard": [[{"text": "Open full brief", "url": notion_url}]]
+            "inline_keyboard": [[{"text": "Open task tables", "url": notion_url}]]
         }
 
     def _post(self, method: str, payload: dict[str, Any]) -> TelegramResult:

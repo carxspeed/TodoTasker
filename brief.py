@@ -10,7 +10,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from daily_brief.config import ConfigurationError, load_settings
-from daily_brief.notion import NotionClient
+from daily_brief.notion import NotionSchoolBoard
 from daily_brief.orchestrator import DailyBriefOrchestrator, LiveSourceProvider
 from daily_brief.runtime import DeferredHealthyLock, HeartbeatLock
 from daily_brief.telegram import TelegramClient
@@ -64,11 +64,15 @@ def main() -> int:
             target = explicit or now.date()
             as_of = now
         notion = None
-        if settings.notion_token and settings.notion_work_db_id and settings.notion_parent_page_id:
-            notion = NotionClient(
+        if (
+            settings.notion_token
+            and settings.notion_parent_page_id
+            and settings.notion_school_page_id
+        ):
+            notion = NotionSchoolBoard(
                 settings.notion_token,
-                settings.notion_work_db_id,
                 settings.notion_parent_page_id,
+                settings.notion_school_page_id,
             )
         telegram = None
         if settings.telegram_bot_token and settings.telegram_chat_id:

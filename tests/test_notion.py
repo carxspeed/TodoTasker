@@ -4,14 +4,19 @@ import pytest
 
 from daily_brief.http import JsonResponse
 from daily_brief.models import NotionWorkItem
+from daily_brief.canvas import load_fixture
 from daily_brief.notion import (
     TASK_DATABASES,
     NotionClient,
+    NotionSchoolBoard,
     NotionTaskStore,
     WorkSnapshot,
     database_schema,
     date_property,
     rich_text_property,
+    school_assignment_fields,
+    school_database_schema,
+    school_properties,
     select_property,
     title_property,
     work_properties,
@@ -65,6 +70,68 @@ def test_property_payload_shapes_are_not_bare_strings() -> None:
     assert work_properties({"Status": "Done"}) == {"Status": {"select": {"name": "Done"}}}
     assert database_schema()["Name"] == {"title": {}}
     assert "Area" not in database_schema()
+    assert school_database_schema()["Canvas"] == {"url": {}}
+    assert school_database_schema()["Canvas ID"] == {"rich_text": {}}
+
+
+def test_school_assignment_payload_includes_source_id_and_safe_next_step() -> None:
+    assignment = load_fixture("fixtures/sample_todo.json").assignments[0]
+    fields = school_assignment_fields(
+        assignment,
+        {"Priority": "MUST", "Effort": "M", "Next step": "Complete part one."},
+    )
+    assert fields["Canvas ID"] == assignment.key
+    assert fields["Priority"] == "MUST"
+    assert fields["Next step"] == "Complete part one."
+    assert len(fields["Sync hash"]) == 64
+    payload = school_properties(fields)
+    assert payload["Canvas"]["url"] == assignment.url
+    assert payload["Due"]["date"]["start"] == assignment.due_at.isoformat()
+
+
+class FakeSchoolClient:
+    def __init__(self):
+        self.children = []
+        self.created_databases = []
+        self.created_rows = []
+
+    def retrieve_page(self, page_id):
+        return {"id": page_id, "url": "https://notion.test/tasks"}
+
+    def list_block_children(self, page_id):
+        return list(self.children)
+
+    def create_database(self, title, **kwargs):
+        database_id = f"db-{len(self.created_databases) + 1}"
+        self.created_databases.append((title, kwargs))
+        return {"id": database_id}
+
+    def query_database_pages(self, database_id):
+        return []
+
+    def create_school_item(self, database_id, fields):
+        self.created_rows.append((database_id, fields))
+        return {"id": f"row-{len(self.created_rows)}"}
+
+    def update_school_item(self, page_id, fields):
+        raise AssertionError("new rows should not be updated")
+
+
+def test_school_board_creates_one_table_per_class_and_excludes_course() -> None:
+    assignments = load_fixture("fixtures/sample_todo.json").assignments
+    fake = FakeSchoolClient()
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+    result = board.sync_canvas_assignments(
+        assignments,
+        details_by_key={assignments[0].key: {"Priority": "MUST", "Effort": "M"}},
+        excluded_course_ids={assignments[-1].course_id},
+    )
+    included = [item for item in assignments if item.course_id != assignments[-1].course_id]
+    assert result.databases_created == len({item.course for item in included})
+    assert result.rows_created == len(included)
+    assert {title for title, _ in fake.created_databases} == {item.course for item in included}
+    assert all(options["is_inline"] is True for _, options in fake.created_databases)
+    assert all(row[1]["Canvas ID"] != assignments[-1].key for row in fake.created_rows)
 
 
 def test_named_task_database_creation_and_archive_payloads() -> None:
@@ -74,6 +141,7 @@ def test_named_task_database_creation_and_archive_payloads() -> None:
     assert result == {"id": "db"}
     assert http.calls[0][0:2] == ("POST", "https://api.notion.com/v1/databases")
     assert http.calls[0][2]["json"]["title"][0]["text"]["content"] == "School"
+    assert http.calls[0][2]["json"]["is_inline"] is False
     with pytest.raises(ValueError, match="unknown task database"):
         client.create_work_database("Other")
     assert client.archive_work_item("page") == {"id": "page"}
