@@ -27,6 +27,10 @@ def parse_args() -> argparse.Namespace:
         help="encrypt current .env secrets, verify them, then blank the plaintext values",
     )
     commands.add_parser("audit", help="check for plaintext secrets and unsafe permissions")
+    web_setup = commands.add_parser(
+        "web-setup", help="open a one-time loopback form for secret entry"
+    )
+    web_setup.add_argument("--timeout-seconds", type=int, default=600)
     return parser.parse_args()
 
 
@@ -75,6 +79,12 @@ def main() -> int:
                     print(f"- {issue}")
                 return 1
             print("security_audit=ok")
+        elif args.command == "web-setup":
+            if not 30 <= args.timeout_seconds <= 1800:
+                raise SecretVaultError("web setup timeout must be 30 to 1800 seconds")
+            from daily_brief.secret_setup import serve_secret_setup
+
+            serve_secret_setup(vault, timeout_seconds=args.timeout_seconds)
         else:
             configured = set(vault.configured())
             for name in sorted(SECRET_NAMES):

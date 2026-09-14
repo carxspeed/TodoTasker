@@ -99,6 +99,16 @@ LocalSystem. The vault is stored outside the repository under
 `%LOCALAPPDATA%\TodoTasker`. Never paste a secret into chat or place it directly on a
 command line.
 
+If your terminal cannot accept hidden input, start the one-time local setup page:
+
+```powershell
+venv\Scripts\python.exe manage_secrets.py web-setup
+```
+
+Open the printed `127.0.0.1` URL. The server binds only to loopback, uses an
+unguessable one-time path, disables caching and logging, and shuts down after saving
+or ten minutes. Fields are masked, and blank fields keep their existing values.
+
 The main settings are:
 
 | Setting | Purpose | Needed |

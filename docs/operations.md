@@ -24,6 +24,10 @@ Windows DPAPI encrypts the vault for the current Windows user under
 briefs, incident journals, private captures, and quarantined check-in replies are
 ignored by Git.
 
+When a terminal cannot accept hidden input, run `manage_secrets.py web-setup` and
+open its one-time `127.0.0.1` URL. The loopback-only, no-cache server shuts down
+after one save or ten minutes.
+
 ## Live-service prerequisites
 
 1. Share the Notion “To Do List” parent page with the “Todo Agent” integration, place its 32-character page id in `.env`, store its integration secret with `manage_secrets.py set NOTION_TOKEN`, then run `setup_notion_db.py` to create or validate the Work, School, Connections, and Misc databases.
