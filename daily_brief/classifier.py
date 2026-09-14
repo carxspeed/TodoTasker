@@ -81,6 +81,7 @@ def _classify_canvas(
             due_at=item.due_at,
             course=item.course,
             description=item.description,
+            user_notes=item.user_notes,
             url=item.url,
             points=item.points,
             submission_status=item.submission_status,

@@ -13,6 +13,8 @@ def deterministic_guidance(item: ClassifiedItem) -> str:
         return "Next step unknown — spend 10 minutes scoping it."
     if item.source == "notion":
         return f"Start with this next step: {item.next_step.strip()}"
+    if item.user_notes.strip():
+        return f"Continue from your Notion note: {item.user_notes.strip()}"
     return "Open the assignment, review the requirements, and complete the first concrete part."
 
 

@@ -61,6 +61,10 @@ class Guidance:
 class NotionDelivery:
     def __init__(self):
         self.calls = 0
+        self.context = {}
+
+    def get_assignment_context(self):
+        return self.context
 
     def sync_canvas_assignments(self, *args, **kwargs):
         self.calls += 1
@@ -222,6 +226,52 @@ def test_prepare_writes_valid_artifact_and_cache(tmp_path: Path) -> None:
     assert (tmp_path / "state" / "cache" / "canvas.json").exists()
     assert state.last_generated is not None
     assert len(artifact.classification_input_hash) == 64
+
+
+def test_school_notes_inform_guidance_and_done_rows_are_excluded(tmp_path: Path) -> None:
+    notion = NotionDelivery()
+    provider = Provider()
+    noted = provider.canvas.assignments[0]
+    completed = noted.model_copy(
+        update={
+            "key": "assignment:completed",
+            "source_key": "assignment:completed",
+            "object_id": "completed",
+            "assignment_id": 999,
+            "name": "Completed in-person task",
+        }
+    )
+    provider.canvas = provider.canvas.model_copy(
+        update={"assignments": [noted, completed]}
+    )
+    notion.context = {
+        noted.key: {"status": "To do", "notes": "Finished the first half."},
+        completed.key: {"status": "Done", "notes": "Submitted in person."},
+    }
+    seen = []
+
+    def guidance(selected, *_args, **_kwargs):
+        seen.extend(selected)
+        return GuidanceResult(
+            overview="",
+            task_guidance=[
+                GuidanceItem(key=item.key, guidance="Continue from your saved progress.")
+                for item in selected
+            ],
+        )
+
+    orchestrator = make_orchestrator(tmp_path, guidance, notion)
+    artifact, _ = orchestrator.prepare(
+        provider,
+        target_date=TARGET,
+        as_of=datetime(2026, 9, 2, 6, 30, tzinfo=TZ),
+        dry_run=True,
+    )
+
+    selected = {item.key: item for item in seen}
+    assert selected[noted.key].user_notes == "Finished the first half."
+    assert completed.key not in selected
+    assert all(item.key != completed.key for item in artifact.sources.canvas.assignments)
 
 
 def test_delivery_reuses_prepared_guidance_and_same_payload_skips(tmp_path: Path) -> None:

@@ -13,7 +13,7 @@ from daily_brief.guidance import (
 from daily_brief.models import ClassifiedItem, FreeWindow
 
 
-def task(index: int, *, description="", next_step="") -> ClassifiedItem:
+def task(index: int, *, description="", next_step="", user_notes="") -> ClassifiedItem:
     return ClassifiedItem(
         key=f"assignment:{index}",
         source="canvas",
@@ -24,6 +24,7 @@ def task(index: int, *, description="", next_step="") -> ClassifiedItem:
         effort_source="points",
         description=description,
         next_step=next_step,
+        user_notes=user_notes,
     )
 
 
@@ -104,6 +105,14 @@ def test_canvas_instructions_are_bounded_and_not_confused_with_notion_next_step(
     assert "next_step" not in payload
     assert payload["canvas_instructions"].startswith("Collect objects.")
     assert len(payload["canvas_instructions"]) == CANVAS_INSTRUCTION_LIMIT
+
+
+def test_canvas_user_notes_are_included_in_guidance_context() -> None:
+    selected = [task(1, user_notes="Finished the first half; continue with questions 6–10.")]
+    request = build_guidance_request(selected, [], TOTALS, date(2026, 9, 14))
+
+    payload = request.user["DATA"]["guidance_input"][0]
+    assert payload["user_notes"] == "Finished the first half; continue with questions 6–10."
 
 
 def test_whole_response_validation_rejects_reordered_extra_and_missing_keys() -> None:

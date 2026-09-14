@@ -72,6 +72,7 @@ def test_property_payload_shapes_are_not_bare_strings() -> None:
     assert "Area" not in database_schema()
     assert school_database_schema()["Canvas"] == {"url": {}}
     assert school_database_schema()["Canvas ID"] == {"rich_text": {}}
+    assert school_database_schema()["Notes / progress"] == {"rich_text": {}}
 
 
 def test_school_assignment_payload_includes_source_id_and_safe_next_step() -> None:
@@ -94,6 +95,7 @@ class FakeSchoolClient:
         self.children = []
         self.created_databases = []
         self.created_rows = []
+        self.ensured_properties = []
 
     def retrieve_page(self, page_id):
         return {"id": page_id, "url": "https://notion.test/tasks"}
@@ -108,6 +110,10 @@ class FakeSchoolClient:
 
     def query_database_pages(self, database_id):
         return []
+
+    def ensure_database_properties(self, database_id, properties):
+        self.ensured_properties.append((database_id, properties))
+        return True
 
     def create_school_item(self, database_id, fields):
         self.created_rows.append((database_id, fields))
@@ -132,6 +138,49 @@ def test_school_board_creates_one_table_per_class_and_excludes_course() -> None:
     assert {title for title, _ in fake.created_databases} == {item.course for item in included}
     assert all(options["is_inline"] is True for _, options in fake.created_databases)
     assert all(row[1]["Canvas ID"] != assignments[-1].key for row in fake.created_rows)
+
+
+def test_school_context_reads_notes_and_status_without_canvas_bookkeeping() -> None:
+    fake = FakeSchoolClient()
+    fake.children = [
+        {"type": "child_database", "id": "general", "child_database": {"title": "General"}},
+        {"type": "child_database", "id": "physics", "child_database": {"title": "Physics"}},
+    ]
+    fake.query_database_pages = lambda database_id: [
+        {
+            "id": "row",
+            "properties": {
+                "Canvas ID": text_prop("rich_text", "assignment:1"),
+                "Status": select_prop("Done"),
+                "Notes / progress": text_prop("rich_text", "Submitted in person."),
+            },
+        }
+    ]
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    assert board.get_assignment_context() == {
+        "assignment:1": {"status": "Done", "notes": "Submitted in person."}
+    }
+    assert fake.ensured_properties == [
+        ("physics", {"Notes / progress": {"rich_text": {}}})
+    ]
+
+
+def test_ensure_database_properties_adds_only_missing_properties() -> None:
+    http = FakeHttp(
+        [
+            {"properties": {"Name": {"type": "title"}}},
+            {"id": "db"},
+            {"properties": {"Notes / progress": {"type": "rich_text"}}},
+        ]
+    )
+    client = NotionClient("token", "", http=http)
+    schema = {"Notes / progress": {"rich_text": {}}}
+
+    assert client.ensure_database_properties("db", schema) is True
+    assert http.calls[1][0:2] == ("PATCH", "https://api.notion.com/v1/databases/db")
+    assert http.calls[1][2]["json"] == {"properties": schema}
+    assert client.ensure_database_properties("db", schema) is False
 
 
 def test_named_task_database_creation_and_archive_payloads() -> None:

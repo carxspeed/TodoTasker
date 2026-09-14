@@ -25,6 +25,7 @@ class CanvasAssignment(Contract):
     points: float | None = None
     url: str = ""
     description: str = Field(default="", max_length=2000)
+    user_notes: str = Field(default="", max_length=1000)
     submission_types: list[str] = Field(default_factory=list)
     submission_status: Literal["unsubmitted", "unknown"]
     needs_confirmation: bool = False
@@ -169,6 +170,7 @@ class ClassifiedItem(Contract):
     deadline: date | None = None
     course: str = ""
     description: str = ""
+    user_notes: str = ""
     next_step: str = ""
     url: str = ""
     points: float | None = None

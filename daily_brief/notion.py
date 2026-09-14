@@ -91,6 +91,7 @@ def school_database_schema() -> dict[str, Any]:
         "Effort": options(EFFORTS),
         "Kind": options(SCHOOL_KINDS),
         "Next step": {"rich_text": {}},
+        "Notes / progress": {"rich_text": {}},
         "Instructions": {"rich_text": {}},
         "Canvas": {"url": {}},
         "Canvas ID": {"rich_text": {}},
@@ -152,6 +153,7 @@ def school_properties(fields: dict[str, Any]) -> dict[str, Any]:
         "Effort": select_property,
         "Kind": select_property,
         "Next step": rich_text_property,
+        "Notes / progress": rich_text_property,
         "Instructions": rich_text_property,
         "Canvas": lambda value: {"url": value or None},
         "Canvas ID": rich_text_property,
@@ -332,6 +334,23 @@ class NotionClient:
     def retrieve_database(self) -> dict[str, Any]:
         return self._json("GET", f"/databases/{self.work_db_id}")
 
+    def ensure_database_properties(
+        self, database_id: str, properties: dict[str, Any]
+    ) -> bool:
+        compact_id = database_id.replace("-", "")
+        database = self._json("GET", f"/databases/{compact_id}")
+        existing = database.get("properties") or {}
+        missing = {name: schema for name, schema in properties.items() if name not in existing}
+        if not missing:
+            return False
+        self._json(
+            "PATCH",
+            f"/databases/{compact_id}",
+            payload={"properties": missing},
+            idempotent=True,
+        )
+        return True
+
     def query_database_pages(self, database_id: str) -> list[dict[str, Any]]:
         payload: dict[str, Any] = {"page_size": 100}
         pages: list[dict[str, Any]] = []
@@ -490,6 +509,13 @@ def _property_rich_text(page: dict[str, Any], name: str) -> str:
     )
 
 
+def _property_select(page: dict[str, Any], name: str) -> str:
+    properties = page.get("properties") or {}
+    prop = properties.get(name) or {}
+    selected = prop.get("select") if prop.get("type") == "select" else None
+    return str((selected or {}).get("name") or "")
+
+
 class NotionSchoolBoard:
     """Synchronize Canvas assignments into one database per class on the School page."""
 
@@ -555,6 +581,10 @@ class NotionSchoolBoard:
                 database_id = str(created["id"])
                 databases[course] = database_id
                 result.databases_created += 1
+            else:
+                self.client.ensure_database_properties(
+                    database_id, {"Notes / progress": {"rich_text": {}}}
+                )
 
             existing_by_source: dict[str, tuple[str, str]] = {}
             for page in self.client.query_database_pages(database_id):
@@ -583,6 +613,30 @@ class NotionSchoolBoard:
                     self.client.create_school_item(database_id, fields)
                     result.rows_created += 1
         return result
+
+    def get_assignment_context(self) -> dict[str, dict[str, str]]:
+        """Read user-owned School fields without treating them as Canvas data."""
+        context: dict[str, dict[str, str]] = {}
+        databases = self._child_databases(
+            self.client.list_block_children(self.school_page_id)
+        )
+        for title, database_id in databases.items():
+            if title == "General":
+                continue
+            self.client.ensure_database_properties(
+                database_id, {"Notes / progress": {"rich_text": {}}}
+            )
+            for page in self.client.query_database_pages(database_id):
+                source_id = _property_rich_text(page, "Canvas ID")
+                if not source_id:
+                    continue
+                context[source_id] = {
+                    "status": _property_select(page, "Status"),
+                    "notes": _bounded(
+                        _property_rich_text(page, "Notes / progress"), 1000
+                    ),
+                }
+        return context
 
 
 class NotionTaskStore:

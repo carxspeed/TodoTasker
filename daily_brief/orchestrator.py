@@ -283,6 +283,24 @@ class DailyBriefOrchestrator:
             warnings.extend(canvas.data_warnings)
         if notion:
             warnings.extend(notion.warnings)
+        if canvas is not None and self.notion_delivery is not None:
+            try:
+                school_context = self.notion_delivery.get_assignment_context()
+                assignments = []
+                for item in canvas.assignments:
+                    context = school_context.get(item.key, {})
+                    if context.get("status") == "Done":
+                        continue
+                    assignments.append(
+                        item.model_copy(
+                            update={"user_notes": context.get("notes", "")}
+                        )
+                    )
+                canvas = canvas.model_copy(update={"assignments": assignments})
+            except Exception:
+                warnings.append(
+                    "School notes/status could not be read; Canvas assignments used their source state"
+                )
         if calendar:
             warnings.extend(calendar.warnings)
         return SourceBundle(canvas, notion, calendar, statuses, warnings)
