@@ -78,7 +78,7 @@ foreach ($Definition in $Definitions) {
         Register-ScheduledTask `
             -TaskName $Definition.Name `
             -Action $Action `
-            -Trigger $Definition.Triggers `
+            -Trigger $Triggers `
             -Settings $Settings `
             -Principal $Principal `
             -Force
