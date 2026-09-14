@@ -105,13 +105,9 @@ def create_secret_setup_server(
         def log_message(self, _format: str, *_args) -> None:
             return
 
-        def _request_is_local(self) -> bool:
+        def _request_has_expected_host(self) -> bool:
             expected_host = f"127.0.0.1:{self.server.server_port}"
-            origin = self.headers.get("Origin", "")
-            return self.headers.get("Host", "") == expected_host and origin in {
-                "",
-                f"http://{expected_host}",
-            }
+            return self.headers.get("Host", "") == expected_host
 
         def _send(self, status: int, body: bytes) -> None:
             self.send_response(status)
@@ -122,13 +118,13 @@ def create_secret_setup_server(
             self.wfile.write(body)
 
         def do_GET(self) -> None:  # noqa: N802
-            if self.path != nonce_path or not self._request_is_local():
+            if self.path != nonce_path or not self._request_has_expected_host():
                 self._send(404, b"Not found")
                 return
             self._send(200, render_setup_page(nonce_path, set(vault.configured())))
 
         def do_POST(self) -> None:  # noqa: N802
-            if self.path != nonce_path or not self._request_is_local():
+            if self.path != nonce_path or not self._request_has_expected_host():
                 self._send(404, b"Not found")
                 return
             if not self.headers.get("Content-Type", "").startswith(

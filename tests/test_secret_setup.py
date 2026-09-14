@@ -56,7 +56,12 @@ def test_loopback_setup_saves_nonempty_values_and_shuts_down() -> None:
         url,
         data=payload,
         method="POST",
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            # Chromium can use an opaque origin for an in-app browser page.
+            # Loopback binding, exact Host validation, and the random path remain.
+            "Origin": "null",
+        },
     )
 
     with urlopen(request, timeout=2) as response:
