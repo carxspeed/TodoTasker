@@ -210,6 +210,7 @@ class ClassificationOutput(Contract):
 class GuidanceItem(Contract):
     key: str
     guidance: str = Field(min_length=1, max_length=160)
+    summary: str = Field(default="", max_length=400)
 
 
 class GuidanceResult(Contract):

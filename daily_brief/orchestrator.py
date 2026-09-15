@@ -529,6 +529,11 @@ class DailyBriefOrchestrator:
                     if guidance
                     else {}
                 )
+                summaries_by_key = (
+                    {item.key: item.summary for item in guidance.task_guidance}
+                    if guidance
+                    else {}
+                )
                 details_by_key: dict[str, dict[str, str]] = {}
                 for priority, items in (
                     ("MUST", classification.must),
@@ -541,6 +546,7 @@ class DailyBriefOrchestrator:
                             "Effort": item.effort,
                             "Next step": guidance_by_key.get(item.key)
                             or deterministic_guidance(item),
+                            "Instructions": summaries_by_key.get(item.key, ""),
                         }
                 for item in classification.verify:
                     details_by_key.setdefault(

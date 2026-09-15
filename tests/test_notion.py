@@ -17,6 +17,7 @@ from daily_brief.notion import (
     school_assignment_fields,
     school_database_schema,
     school_properties,
+    compact_instruction_summary,
     select_property,
     title_property,
     work_properties,
@@ -88,6 +89,20 @@ def test_school_assignment_payload_includes_source_id_and_safe_next_step() -> No
     payload = school_properties(fields)
     assert payload["Canvas"]["url"] == assignment.url
     assert payload["Due"]["date"]["start"] == assignment.due_at.isoformat()
+
+
+def test_school_instructions_use_short_summary_and_keep_source_out_of_view() -> None:
+    assignment = load_fixture("fixtures/sample_todo.json").assignments[0]
+    assignment.description = "First requirement. Second requirement. " + "Raw detail " * 100
+
+    fields = school_assignment_fields(
+        assignment,
+        {"Instructions": "Complete the first two requirements and submit the result."},
+    )
+
+    assert fields["Instructions"] == "Complete the first two requirements and submit the result."
+    assert "Raw detail" not in fields["Instructions"]
+    assert compact_instruction_summary(assignment.description) == "First requirement. Second requirement."
 
 
 class FakeSchoolClient:

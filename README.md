@@ -188,7 +188,7 @@ Work, Connections, Misc, and School / General use this schema:
 - `Deadline`;
 - `Effort`.
 
-Each class table contains the assignment name, due time, status, priority, effort, next step, a user-editable `Notes / progress` field, extracted instructions, and a Canvas link. Canvas ID, kind, and sync hash remain available as hidden bookkeeping fields. Repeated runs update matching rows instead of duplicating them and never overwrite `Notes / progress`. Set `Status` to `Done` for an in-person submission; future briefs will omit that assignment. Notes such as “finished the first half” are supplied to the guidance model on the next run. The excluded DECA course is never synchronized.
+Each class table contains the assignment name, due time, status, priority, effort, next step, a user-editable `Notes / progress` field, a short AI summary of the instructions, and a Canvas link. Full Canvas descriptions and extracted attachment text stay in the run's bounded internal context instead of flooding the visible Notion table. Canvas ID, kind, and sync hash remain available as hidden bookkeeping fields. Repeated runs update matching rows instead of duplicating them and never overwrite `Notes / progress`. Set `Status` to `Done` for an in-person submission; future briefs will omit that assignment. Notes such as “finished the first half” are supplied to the guidance model on the next run. The excluded DECA course is never synchronized.
 
 The table containing a manual task is its Area. Telegram check-ins route new tasks to the matching database and the daily brief reads active rows from all four logical areas. Add non-Canvas school tasks to **School / General**.
 

@@ -41,7 +41,14 @@ def response_for(keys):
     return json.dumps(
         {
             "overview": "Use the available window.",
-            "task_guidance": [{"key": key, "guidance": "Open the instructions and begin."} for key in keys],
+            "task_guidance": [
+                {
+                    "key": key,
+                    "guidance": "Open the instructions and begin.",
+                    "summary": "Complete the assigned work using the provided instructions.",
+                }
+                for key in keys
+            ],
         }
     )
 
@@ -131,12 +138,32 @@ def test_canvas_unknown_guidance_is_rejected() -> None:
         {
             "overview": "",
             "task_guidance": [
-                {"key": "assignment:1", "guidance": "Next step unknown — scope it."}
+                {
+                    "key": "assignment:1",
+                    "guidance": "Next step unknown — scope it.",
+                    "summary": "Review the assignment requirements.",
+                }
             ],
         }
     )
     with pytest.raises(ValueError, match="Canvas guidance"):
         validate_guidance_text(response, request)
+
+
+def test_summary_is_backward_compatible_when_model_omits_it() -> None:
+    request = build_guidance_request([task(1)], [], TOTALS, date(2026, 9, 2))
+    response = json.dumps(
+        {
+            "overview": "",
+            "task_guidance": [
+                {"key": "assignment:1", "guidance": "Open the worksheet and begin."}
+            ],
+        }
+    )
+
+    result = validate_guidance_text(response, request)
+
+    assert result.task_guidance[0].summary == ""
 
 
 def test_local_generation_makes_exactly_one_chat_call() -> None:

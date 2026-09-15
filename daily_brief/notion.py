@@ -104,6 +104,28 @@ def _bounded(value: str, limit: int) -> str:
     return normalized if len(normalized) <= limit else normalized[: limit - 3].rstrip() + "..."
 
 
+def compact_instruction_summary(value: str, limit: int = 400) -> str:
+    """Create a readable fallback when model-generated summary text is unavailable."""
+    text = re.sub(r"[*_#`]+", "", value or "")
+    text = re.sub(r"\bAttachment\s+[^:]{1,120}:\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text).strip(" :-")
+    if not text:
+        return ""
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    summary: list[str] = []
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        candidate = " ".join([*summary, sentence])
+        if summary and len(candidate) > limit:
+            break
+        summary.append(sentence)
+        if len(summary) == 2 or len(candidate) >= limit:
+            break
+    return _bounded(" ".join(summary) or text, limit)
+
+
 def school_assignment_fields(
     assignment,
     details: dict[str, str] | None = None,
@@ -114,7 +136,11 @@ def school_assignment_fields(
         if assignment.needs_confirmation or assignment.submission_status == "unknown"
         else "To do"
     )
-    instructions = _bounded(assignment.description, 1800)
+    instructions = _bounded(
+        details.get("Instructions")
+        or compact_instruction_summary(assignment.description),
+        400,
+    )
     next_step = _bounded(
         details.get("Next step")
         or (
@@ -137,8 +163,14 @@ def school_assignment_fields(
         "Canvas": assignment.url or None,
         "Canvas ID": assignment.key,
     }
+    fingerprint_data = {
+        **fields,
+        "Source instructions hash": hashlib.sha256(
+            assignment.description.encode("utf-8")
+        ).hexdigest(),
+    }
     fingerprint = hashlib.sha256(
-        json.dumps(fields, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(fingerprint_data, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     fields["Sync hash"] = fingerprint
     return fields
