@@ -190,6 +190,8 @@ Work, Connections, Misc, and School / General use this schema:
 
 Each class table contains the assignment name, due time, status, priority, effort, next step, a user-editable `Notes / progress` field, a short AI summary of the instructions, and a Canvas link. Full Canvas descriptions and extracted attachment text stay in the run's bounded internal context instead of flooding the visible Notion table. Canvas ID, kind, and sync hash remain available as hidden bookkeeping fields. Repeated runs update matching rows instead of duplicating them and never overwrite `Notes / progress`. Set `Status` to `Done` for an in-person submission; future briefs will omit that assignment. Notes such as “finished the first half” are supplied to the guidance model on the next run. The excluded DECA course is never synchronized.
 
+The main To Do List page also contains a generated **Today's Plan** table. It mirrors the same ordered MUST, SMART, and MAY tasks used by Telegram. The visible view shows the task, priority, course or area, time estimate, next step, status, and source link; internal `Rank`, `Task ID`, and `Plan date` fields support sorting and refreshes. Marking a row Done removes it from the next brief and plan.
+
 The table containing a manual task is its Area. Telegram check-ins route new tasks to the matching database and the daily brief reads active rows from all four logical areas. Add non-Canvas school tasks to **School / General**.
 
 Add three to five real active items across the four databases so the first brief has useful data. Keep each row's `Name`, `Status`, and `Next step` current.

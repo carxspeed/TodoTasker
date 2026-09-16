@@ -23,6 +23,8 @@ EFFORTS = ["S", "M", "L"]
 SCHOOL_STATUSES = ["To do", "Verify", "Done"]
 SCHOOL_PRIORITIES = ["MUST", "SMART", "MAY", "Later", "Verify"]
 SCHOOL_KINDS = ["assignment", "quiz", "discussion_topic", "sub_assignment"]
+DAILY_PLAN_TITLE = "Today's Plan"
+DAILY_PLAN_STATUSES = ["To do", "Done"]
 
 
 class NotionError(RuntimeError):
@@ -43,6 +45,16 @@ class SchoolSyncResult:
     rows_created: int = 0
     rows_updated: int = 0
     rows_unchanged: int = 0
+
+
+@dataclass
+class DailyPlanSyncResult:
+    page_id: str
+    url: str
+    database_created: bool = False
+    rows_created: int = 0
+    rows_updated: int = 0
+    rows_archived: int = 0
 
 
 def title_property(value: str) -> dict[str, Any]:
@@ -96,6 +108,24 @@ def school_database_schema() -> dict[str, Any]:
         "Canvas": {"url": {}},
         "Canvas ID": {"rich_text": {}},
         "Sync hash": {"rich_text": {}},
+    }
+
+
+def daily_plan_schema() -> dict[str, Any]:
+    def options(values: Iterable[str]) -> dict[str, Any]:
+        return {"select": {"options": [{"name": value} for value in values]}}
+
+    return {
+        "Task": {"title": {}},
+        "Priority": options(SCHOOL_PRIORITIES[:3]),
+        "Course / area": {"rich_text": {}},
+        "Time (hours)": {"number": {"format": "number"}},
+        "Next step": {"rich_text": {}},
+        "Status": options(DAILY_PLAN_STATUSES),
+        "Source": {"url": {}},
+        "Plan date": {"date": {}},
+        "Task ID": {"rich_text": {}},
+        "Rank": {"number": {"format": "number"}},
     }
 
 
@@ -194,6 +224,25 @@ def school_properties(fields: dict[str, Any]) -> dict[str, Any]:
     unknown = set(fields) - set(builders)
     if unknown:
         raise ValueError(f"unknown School properties: {', '.join(sorted(unknown))}")
+    return {name: builders[name](value) for name, value in fields.items()}
+
+
+def daily_plan_properties(fields: dict[str, Any]) -> dict[str, Any]:
+    builders = {
+        "Task": title_property,
+        "Priority": select_property,
+        "Course / area": rich_text_property,
+        "Time (hours)": lambda value: {"number": value},
+        "Next step": rich_text_property,
+        "Status": select_property,
+        "Source": lambda value: {"url": value or None},
+        "Plan date": date_property,
+        "Task ID": rich_text_property,
+        "Rank": lambda value: {"number": value},
+    }
+    unknown = set(fields) - set(builders)
+    if unknown:
+        raise ValueError(f"unknown Today's Plan properties: {', '.join(sorted(unknown))}")
     return {name: builders[name](value) for name, value in fields.items()}
 
 
@@ -510,6 +559,32 @@ class NotionClient:
             idempotent=True,
         )
 
+    def create_daily_plan_item(
+        self, database_id: str, fields: dict[str, Any]
+    ) -> dict[str, Any]:
+        return self._json(
+            "POST",
+            "/pages",
+            payload={
+                "parent": {
+                    "type": "database_id",
+                    "database_id": database_id.replace("-", ""),
+                },
+                "properties": daily_plan_properties(fields),
+            },
+            idempotent=False,
+        )
+
+    def update_daily_plan_item(
+        self, page_id: str, fields: dict[str, Any]
+    ) -> dict[str, Any]:
+        return self._json(
+            "PATCH",
+            f"/pages/{page_id.replace('-', '')}",
+            payload={"properties": daily_plan_properties(fields)},
+            idempotent=True,
+        )
+
     def list_block_children(self, block_id: str) -> list[dict[str, Any]]:
         children: list[dict[str, Any]] = []
         cursor = None
@@ -669,6 +744,102 @@ class NotionSchoolBoard:
                     ),
                 }
         return context
+
+    def _daily_plan_database(self) -> str | None:
+        databases = self._child_databases(
+            self.client.list_block_children(self.parent_page_id)
+        )
+        return databases.get(DAILY_PLAN_TITLE)
+
+    def get_daily_plan_context(self) -> dict[str, dict[str, str]]:
+        """Read completion state from the generated dashboard without trusting its copy."""
+        database_id = self._daily_plan_database()
+        if not database_id:
+            return {}
+        context: dict[str, dict[str, str]] = {}
+        for page in self.client.query_database_pages(database_id):
+            task_id = _property_rich_text(page, "Task ID")
+            if task_id:
+                context[task_id] = {"status": _property_select(page, "Status")}
+        return context
+
+    def sync_daily_plan(
+        self,
+        classification: Any,
+        *,
+        guidance_by_key: dict[str, str] | None = None,
+        target_date: date,
+    ) -> DailyPlanSyncResult:
+        """Mirror the already-ordered daily brief into a compact Notion dashboard."""
+        root = self.client.retrieve_page(self.parent_page_id)
+        dashboard_url = str(root.get("url") or f"https://www.notion.so/{self.parent_page_id}")
+        database_id = self._daily_plan_database()
+        created = False
+        if not database_id:
+            database = self.client.create_database(
+                DAILY_PLAN_TITLE,
+                parent_page_id=self.parent_page_id,
+                properties=daily_plan_schema(),
+                is_inline=True,
+            )
+            database_id = str(database["id"])
+            created = True
+        else:
+            self.client.ensure_database_properties(database_id, daily_plan_schema())
+
+        result = DailyPlanSyncResult(
+            self.parent_page_id,
+            dashboard_url,
+            database_created=created,
+        )
+        existing: dict[str, tuple[str, str]] = {}
+        for page in self.client.query_database_pages(database_id):
+            task_id = _property_rich_text(page, "Task ID")
+            page_id = str(page.get("id") or "")
+            if task_id and page_id:
+                existing[task_id] = (page_id, _property_select(page, "Status"))
+
+        guidance = guidance_by_key or {}
+        active_ids: set[str] = set()
+        rank = 0
+        for priority, items in (
+            ("MUST", classification.must),
+            ("SMART", classification.smart),
+            ("MAY", classification.may),
+        ):
+            for item in items:
+                rank += 1
+                active_ids.add(item.key)
+                fields = {
+                    "Task": _bounded(item.name, 500),
+                    "Priority": priority,
+                    "Course / area": _bounded(item.course or item.source.title(), 200),
+                    "Time (hours)": item.effort_hours,
+                    "Next step": _bounded(
+                        guidance.get(item.key) or item.next_step or "Open the task and begin.",
+                        500,
+                    ),
+                    "Status": "To do",
+                    "Source": item.url or None,
+                    "Plan date": target_date,
+                    "Task ID": item.key,
+                    "Rank": rank,
+                }
+                current = existing.get(item.key)
+                if current:
+                    if current[1] == "Done":
+                        fields["Status"] = "Done"
+                    self.client.update_daily_plan_item(current[0], fields)
+                    result.rows_updated += 1
+                else:
+                    self.client.create_daily_plan_item(database_id, fields)
+                    result.rows_created += 1
+
+        for task_id, (page_id, _status) in existing.items():
+            if task_id not in active_ids:
+                self.client.archive_page(page_id)
+                result.rows_archived += 1
+        return result
 
 
 class NotionTaskStore:

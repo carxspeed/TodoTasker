@@ -301,6 +301,31 @@ class DailyBriefOrchestrator:
                 warnings.append(
                     "School notes/status could not be read; Canvas assignments used their source state"
                 )
+        if self.notion_delivery is not None:
+            try:
+                plan_context = self.notion_delivery.get_daily_plan_context()
+                if canvas is not None:
+                    canvas = canvas.model_copy(
+                        update={
+                            "assignments": [
+                                item
+                                for item in canvas.assignments
+                                if plan_context.get(item.key, {}).get("status") != "Done"
+                            ]
+                        }
+                    )
+                if notion is not None:
+                    notion = notion.model_copy(
+                        update={
+                            "items": [
+                                item
+                                for item in notion.items
+                                if plan_context.get(item.key, {}).get("status") != "Done"
+                            ]
+                        }
+                    )
+            except Exception:
+                warnings.append("Today's Plan status could not be read; source tasks were unchanged")
         if calendar:
             warnings.extend(calendar.warnings)
         return SourceBundle(canvas, notion, calendar, statuses, warnings)
@@ -522,7 +547,7 @@ class DailyBriefOrchestrator:
         delivery = state.deliveries.setdefault(target_date.isoformat(), DeliveryRecord())
         delivery.brief_hash = brief_hash
         notion_url = None
-        if self.notion_delivery is not None and bundle.canvas is not None:
+        if self.notion_delivery is not None:
             try:
                 guidance_by_key = (
                     {item.key: item.guidance for item in guidance.task_guidance}
@@ -556,14 +581,22 @@ class DailyBriefOrchestrator:
                             "Next step": "Confirm whether this Canvas item is still unfinished.",
                         },
                     )
-                notion_result = self.notion_delivery.sync_canvas_assignments(
-                    bundle.canvas.assignments,
-                    details_by_key=details_by_key,
-                    excluded_course_ids=self.settings.canvas_excluded_course_ids,
+                if bundle.canvas is not None:
+                    notion_result = self.notion_delivery.sync_canvas_assignments(
+                        bundle.canvas.assignments,
+                        details_by_key=details_by_key,
+                        excluded_course_ids=self.settings.canvas_excluded_course_ids,
+                    )
+                else:
+                    notion_result = None
+                plan_result = self.notion_delivery.sync_daily_plan(
+                    classification,
+                    guidance_by_key=guidance_by_key,
+                    target_date=target_date,
                 )
-                delivery.notion_page_id = notion_result.page_id
-                delivery.notion_url = notion_result.url
-                notion_url = notion_result.url
+                delivery.notion_page_id = plan_result.page_id
+                delivery.notion_url = plan_result.url
+                notion_url = plan_result.url
                 state.last_notion_ok = now
                 self.state_store.save(state)
             except Exception:

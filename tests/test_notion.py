@@ -7,11 +7,14 @@ from daily_brief.models import NotionWorkItem
 from daily_brief.canvas import load_fixture
 from daily_brief.notion import (
     TASK_DATABASES,
+    DAILY_PLAN_TITLE,
     NotionClient,
     NotionSchoolBoard,
     NotionTaskStore,
     WorkSnapshot,
     database_schema,
+    daily_plan_properties,
+    daily_plan_schema,
     date_property,
     rich_text_property,
     school_assignment_fields,
@@ -74,6 +77,8 @@ def test_property_payload_shapes_are_not_bare_strings() -> None:
     assert school_database_schema()["Canvas"] == {"url": {}}
     assert school_database_schema()["Canvas ID"] == {"rich_text": {}}
     assert school_database_schema()["Notes / progress"] == {"rich_text": {}}
+    assert daily_plan_schema()["Rank"] == {"number": {"format": "number"}}
+    assert daily_plan_properties({"Time (hours)": 1.5}) == {"Time (hours)": {"number": 1.5}}
 
 
 def test_school_assignment_payload_includes_source_id_and_safe_next_step() -> None:
@@ -111,6 +116,8 @@ class FakeSchoolClient:
         self.created_databases = []
         self.created_rows = []
         self.ensured_properties = []
+        self.updated_rows = []
+        self.archived_rows = []
 
     def retrieve_page(self, page_id):
         return {"id": page_id, "url": "https://notion.test/tasks"}
@@ -136,6 +143,18 @@ class FakeSchoolClient:
 
     def update_school_item(self, page_id, fields):
         raise AssertionError("new rows should not be updated")
+
+    def create_daily_plan_item(self, database_id, fields):
+        self.created_rows.append((database_id, fields))
+        return {"id": f"plan-{len(self.created_rows)}"}
+
+    def update_daily_plan_item(self, page_id, fields):
+        self.updated_rows.append((page_id, fields))
+        return {"id": page_id}
+
+    def archive_page(self, page_id):
+        self.archived_rows.append(page_id)
+        return {"id": page_id, "archived": True}
 
 
 def test_school_board_creates_one_table_per_class_and_excludes_course() -> None:
@@ -179,6 +198,55 @@ def test_school_context_reads_notes_and_status_without_canvas_bookkeeping() -> N
     assert fake.ensured_properties == [
         ("physics", {"Notes / progress": {"rich_text": {}}})
     ]
+
+
+def test_daily_plan_uses_internal_rank_and_archives_stale_rows() -> None:
+    assignment = load_fixture("fixtures/sample_todo.json").assignments[0]
+    from daily_brief.models import ClassificationOutput, ClassifiedItem
+    from datetime import datetime, timezone
+
+    item = ClassifiedItem(
+        key=assignment.key,
+        source="canvas",
+        name=assignment.name,
+        tier="must",
+        effort="M",
+        effort_hours=1.5,
+        effort_source="points",
+        course=assignment.course,
+        url=assignment.url,
+    )
+    classification = ClassificationOutput(
+        target_date=date(2026, 9, 15),
+        as_of=datetime(2026, 9, 15, tzinfo=timezone.utc),
+        must=[item],
+    )
+    fake = FakeSchoolClient()
+    fake.children = [
+        {"type": "child_database", "id": "plan-db", "child_database": {"title": DAILY_PLAN_TITLE}}
+    ]
+    fake.query_database_pages = lambda _database_id: [
+        {
+            "id": "stale-page",
+            "properties": {
+                "Task ID": text_prop("rich_text", "assignment:stale"),
+                "Status": select_prop("To do"),
+            },
+        }
+    ]
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    result = board.sync_daily_plan(
+        classification,
+        guidance_by_key={assignment.key: "Complete the first requirement."},
+        target_date=date(2026, 9, 15),
+    )
+
+    assert result.rows_created == 1
+    assert result.rows_archived == 1
+    assert fake.created_rows[0][1]["Rank"] == 1
+    assert fake.created_rows[0][1]["Next step"] == "Complete the first requirement."
+    assert fake.archived_rows == ["stale-page"]
 
 
 def test_ensure_database_properties_adds_only_missing_properties() -> None:

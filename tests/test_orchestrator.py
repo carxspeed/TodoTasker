@@ -62,12 +62,21 @@ class NotionDelivery:
     def __init__(self):
         self.calls = 0
         self.context = {}
+        self.plan_context = {}
+        self.plan_calls = 0
 
     def get_assignment_context(self):
         return self.context
 
+    def get_daily_plan_context(self):
+        return self.plan_context
+
     def sync_canvas_assignments(self, *args, **kwargs):
         self.calls += 1
+        return SchoolSyncResult("page", "https://notion.test/page")
+
+    def sync_daily_plan(self, *args, **kwargs):
+        self.plan_calls += 1
         return SchoolSyncResult("page", "https://notion.test/page")
 
 
