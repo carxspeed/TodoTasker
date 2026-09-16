@@ -62,6 +62,13 @@ MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 MAX_ATTACHMENTS_PER_ASSIGNMENT = 3
 MAX_PDF_PAGES = 12
 MAX_HTTP_REDIRECTS = 5
+MICROSOFT_LOGIN_HOSTS = frozenset(
+    {
+        "login.microsoftonline.com",
+        "login.live.com",
+        "login.microsoft.com",
+    }
+)
 
 
 class CanvasError(RuntimeError):
@@ -82,6 +89,20 @@ def _origin(url: str) -> tuple[str, str, int]:
     if scheme != "https" or not hostname or parsed.username or parsed.password:
         raise CanvasError("CANVAS_UNSAFE_URL", "Canvas returned a non-HTTPS or credentialed URL")
     return scheme, hostname, port
+
+
+def _trusted_microsoft_login_url(url: str) -> bool:
+    """Only place school credentials may be entered during Canvas renewal."""
+    try:
+        parsed = urlparse(str(url))
+    except ValueError:
+        return False
+    return (
+        parsed.scheme.casefold() == "https"
+        and (parsed.hostname or "").casefold() in MICROSOFT_LOGIN_HOSTS
+        and not parsed.username
+        and not parsed.password
+    )
 
 
 class _RequestsResponse:
@@ -448,10 +469,47 @@ def verify_session(request, base_url: str) -> dict[str, Any]:
     return _response_json(response, expected=dict, session_check=True)
 
 
+def _complete_microsoft_login(page, email: str, password: str) -> None:
+    """Submit stored credentials only to Microsoft's HTTPS sign-in form."""
+    if not _trusted_microsoft_login_url(getattr(page, "url", "")):
+        raise CanvasError(
+            "SESSION_EXPIRED",
+            "Canvas redirected somewhere other than Microsoft sign-in",
+            exit_code=2,
+        )
+
+    email_input = page.locator(
+        "input[type='email'], input[name='loginfmt'], #i0116"
+    ).first
+    email_input.wait_for(state="visible", timeout=20_000)
+    if not _trusted_microsoft_login_url(getattr(page, "url", "")):
+        raise CanvasError(
+            "SESSION_EXPIRED", "Microsoft sign-in origin changed", exit_code=2
+        )
+    email_input.fill(email)
+    page.locator("#idSIButton9, input[type='submit']").first.click()
+
+    password_input = page.locator(
+        "input[type='password'], input[name='passwd'], #i0118"
+    ).first
+    password_input.wait_for(state="visible", timeout=20_000)
+    if not _trusted_microsoft_login_url(getattr(page, "url", "")):
+        raise CanvasError(
+            "SESSION_EXPIRED", "Microsoft sign-in origin changed", exit_code=2
+        )
+    password_input.fill(password)
+    page.locator("#idSIButton9, input[type='submit']").first.click()
+
+
 def ensure_canvas_session(
-    context, base_url: str, *, renewal_wait_ms: int = 3_000
+    context,
+    base_url: str,
+    *,
+    microsoft_email: str = "",
+    microsoft_password: str = "",
+    renewal_wait_ms: int = 3_000,
 ) -> dict[str, Any]:
-    """Verify Canvas and silently renew it through Microsoft SSO when possible."""
+    """Verify Canvas and renew an expired session through Microsoft when possible."""
 
     base = base_url.rstrip("/")
     try:
@@ -469,19 +527,32 @@ def ensure_canvas_session(
         )
         if renewal_wait_ms:
             page.wait_for_timeout(renewal_wait_ms)
+        try:
+            return verify_session(context.request, base)
+        except CanvasError as exc:
+            if exc.code != "SESSION_EXPIRED":
+                raise
+        if not (microsoft_email and microsoft_password):
+            raise CanvasError(
+                "SESSION_EXPIRED",
+                "Microsoft sign-in needs encrypted MICROSOFT_EMAIL and MICROSOFT_PASSWORD",
+                exit_code=2,
+            )
+        _complete_microsoft_login(page, microsoft_email, microsoft_password)
+        page.wait_for_timeout(1_500)
         return verify_session(context.request, base)
     except CanvasError as exc:
         if exc.code == "SESSION_EXPIRED":
             raise CanvasError(
                 "SESSION_EXPIRED",
-                "automatic Microsoft renewal failed; run canvas.py login",
+                "automatic Microsoft renewal failed",
                 exit_code=2,
             ) from exc
         raise
     except Exception as exc:
         raise CanvasError(
             "SESSION_EXPIRED",
-            "automatic Microsoft renewal failed; run canvas.py login",
+            "automatic Microsoft renewal failed",
             exit_code=2,
         ) from exc
     finally:

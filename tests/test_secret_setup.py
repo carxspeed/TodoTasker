@@ -7,7 +7,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from daily_brief.secret_setup import create_secret_setup_server
+from daily_brief.secret_setup import FIELD_LABELS, create_secret_setup_server
 
 
 class MemoryVault:
@@ -31,7 +31,7 @@ def test_loopback_setup_page_uses_password_fields_and_no_store_headers() -> None
             body = response.read().decode("utf-8")
             assert response.headers["Cache-Control"] == "no-store, max-age=0"
             assert "default-src 'none'" in response.headers["Content-Security-Policy"]
-        assert body.count('type="password"') == 5
+        assert body.count('type="password"') == len(FIELD_LABELS)
         assert "existing-notion-secret" not in body
         assert "already configured" in body
     finally:

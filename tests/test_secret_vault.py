@@ -84,9 +84,22 @@ def test_unknown_secret_names_are_rejected(tmp_path: Path) -> None:
     store = vault(tmp_path / "secrets.dpapi")
 
     with pytest.raises(SecretVaultError, match="unsupported secret name"):
-        store.set("MICROSOFT_PASSWORD", "do-not-store-this")
+        store.set("UNSUPPORTED_SECRET", "do-not-store-this")
 
-    assert "MICROSOFT_PASSWORD" not in SECRET_NAMES
+    assert "MICROSOFT_PASSWORD" in SECRET_NAMES
+
+
+def test_microsoft_credentials_are_encrypted_like_other_secrets(tmp_path: Path) -> None:
+    path = tmp_path / "secrets.dpapi"
+    store = vault(path)
+
+    store.set_many(
+        {"MICROSOFT_EMAIL": "student@example.test", "MICROSOFT_PASSWORD": "password"}
+    )
+
+    assert store.get("MICROSOFT_EMAIL") == "student@example.test"
+    assert b"student@example.test" not in path.read_bytes()
+    assert b"password" not in path.read_bytes()
 
 
 def test_default_vault_uses_git_ignored_project_private_directory(

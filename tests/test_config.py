@@ -52,6 +52,18 @@ def test_canvas_token_is_loaded_from_vault(tmp_path: Path) -> None:
     assert settings.canvas_access_token == "vault-canvas-token"
 
 
+def test_microsoft_renewal_credentials_are_loaded_from_vault(tmp_path: Path) -> None:
+    settings = load_settings(
+        tmp_path / "missing.env",
+        secret_vault=Vault(
+            {"MICROSOFT_EMAIL": "student@example.test", "MICROSOFT_PASSWORD": "password"}
+        ),
+    )
+
+    assert settings.microsoft_email == "student@example.test"
+    assert settings.microsoft_password == "password"
+
+
 def test_plaintext_env_secrets_are_rejected(tmp_path: Path) -> None:
     env = tmp_path / ".env"
     write_env(env, NOTION_TOKEN="plaintext-value")

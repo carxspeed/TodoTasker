@@ -18,6 +18,8 @@ FIELD_LABELS = {
     "NOTION_TOKEN": "Notion integration secret",
     "ICAL_URL": "Google Calendar secret iCal URL",
     "CANVAS_ACCESS_TOKEN": "Canvas access token (optional)",
+    "MICROSOFT_EMAIL": "Microsoft school email (used only to renew Canvas)",
+    "MICROSOFT_PASSWORD": "Microsoft school password (used only to renew Canvas)",
     "ANTHROPIC_API_KEY": "Anthropic API key (optional)",
 }
 

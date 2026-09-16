@@ -62,6 +62,8 @@ class Settings(BaseModel):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
     canvas_access_token: str = ""
+    microsoft_email: str = ""
+    microsoft_password: str = ""
     model_provider: Literal["local", "anthropic"] = "local"
     ollama_model: str = "qwen3:4b"
     ollama_base_url: HttpUrl = "http://localhost:11434"
@@ -242,6 +244,8 @@ def load_settings(
         "anthropic_api_key": values.get("ANTHROPIC_API_KEY", ""),
         "anthropic_model": values.get("ANTHROPIC_MODEL", "claude-sonnet-5"),
         "canvas_access_token": values.get("CANVAS_ACCESS_TOKEN", ""),
+        "microsoft_email": values.get("MICROSOFT_EMAIL", ""),
+        "microsoft_password": values.get("MICROSOFT_PASSWORD", ""),
         "model_provider": values.get("MODEL_PROVIDER", "local"),
         "ollama_model": values.get("OLLAMA_MODEL", "qwen3:4b"),
         "ollama_base_url": values.get("OLLAMA_BASE_URL", "http://localhost:11434"),

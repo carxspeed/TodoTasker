@@ -73,7 +73,12 @@ class LiveSourceProvider:
 
         with sync_playwright() as playwright:
             with open_saved_canvas_context(playwright, self.profile) as context:
-                ensure_canvas_session(context, str(self.settings.canvas_base))
+                ensure_canvas_session(
+                    context,
+                    str(self.settings.canvas_base),
+                    microsoft_email=self.settings.microsoft_email,
+                    microsoft_password=self.settings.microsoft_password,
+                )
                 save_canvas_session(context, self.profile)
                 return fetch_live(
                     context.request,
@@ -122,7 +127,12 @@ class LiveSourceProvider:
 
         with sync_playwright() as playwright:
             with open_saved_canvas_context(playwright, self.profile) as context:
-                ensure_canvas_session(context, str(self.settings.canvas_base))
+                ensure_canvas_session(
+                    context,
+                    str(self.settings.canvas_base),
+                    microsoft_email=self.settings.microsoft_email,
+                    microsoft_password=self.settings.microsoft_password,
+                )
         return "session_fallback" if token_failed else "session"
 
     def fetch_notion(self) -> NotionSnapshot:

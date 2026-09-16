@@ -29,5 +29,7 @@ def test_example_environment_contains_no_credentials() -> None:
         "ICAL_URL",
         "ANTHROPIC_API_KEY",
         "CANVAS_ACCESS_TOKEN",
+        "MICROSOFT_EMAIL",
+        "MICROSOFT_PASSWORD",
     ):
         assert entries[key] == ""

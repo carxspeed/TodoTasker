@@ -125,7 +125,9 @@ The main settings are:
 | `TELEGRAM_CHAT_ID` | Your numeric Telegram conversation ID | Created automatically |
 | `ICAL_URL` | Google Calendar secret iCal URL; store in the encrypted vault | Yes |
 | `CANVAS_BASE` | Canvas base URL, without a trailing slash | Yes |
-| `CANVAS_ACCESS_TOKEN` | Preferred unattended Canvas credential; store in the encrypted vault | Recommended |
+| `MICROSOFT_EMAIL` | School Microsoft email; stored only in the encrypted vault | Yes for unattended Canvas renewal |
+| `MICROSOFT_PASSWORD` | School Microsoft password; stored only in the encrypted vault | Yes for unattended Canvas renewal |
+| `CANVAS_ACCESS_TOKEN` | Optional Canvas credential, if the school permits it | No |
 | `TIMEZONE` | IANA time zone used for scheduling | Yes |
 | `OLLAMA_MODEL` | Exact local model name reported by `ollama list` | Yes |
 | `OLLAMA_BASE_URL` | Ollama API address | Yes |
@@ -248,21 +250,15 @@ work marked `unsubmitted` even after it was handed in.
 Briefs display the Canvas course beneath each assignment and render assignment
 deadlines in the configured local timezone, including its timezone abbreviation.
 
-The preferred method is a Canvas access token. In Canvas account settings, create a
-personal access token for TodoTasker if your school permits it, then store it through
-the hidden prompt and verify it:
+This school blocks Canvas access tokens, so TodoTasker uses Microsoft sign-in. Store
+your school email and password through the hidden vault prompts:
 
 ```powershell
-venv\Scripts\python.exe manage_secrets.py set CANVAS_ACCESS_TOKEN
-venv\Scripts\python.exe canvas.py auth-check
+venv\Scripts\python.exe manage_secrets.py set MICROSOFT_EMAIL
+venv\Scripts\python.exe manage_secrets.py set MICROSOFT_PASSWORD
 ```
 
-The token is sent only to the exact HTTPS origin configured by `CANVAS_BASE`. It is
-removed on any cross-origin redirect and cleared from the in-memory client when the
-request finishes.
-
-As a fallback, create an encrypted browser session with the one-time interactive
-login:
+Then create the initial encrypted browser session with one interactive login:
 
 ```powershell
 venv\Scripts\python.exe canvas.py login
@@ -271,14 +267,14 @@ venv\Scripts\python.exe canvas.py login
 Complete Microsoft SSO in the opened Chromium window, return to PowerShell, and
 press Enter. TodoTasker verifies Canvas before saving the session.
 
-The browser session is encrypted with Windows DPAPI and stored at
-`.private\canvas-session.dpapi`. It is decrypted only in memory; TodoTasker does not
-retain a Chromium profile or plaintext
-`storage-state.json`. Reads try the Canvas token first and fall back to the encrypted
-session if the token stops working. The scheduled authentication check warns you in
-Telegram before the nightly workflow if all unattended methods fail. An expired
-browser session still requires another interactive `canvas.py login`; your Microsoft
-password is never stored by TodoTasker.
+The browser session and Microsoft credentials are encrypted with Windows DPAPI and stored in
+`.private\canvas-session.dpapi` and `.private\secrets.dpapi`. They are decrypted only in memory; TodoTasker does not
+retain a Chromium profile or plaintext `storage-state.json`. When Canvas expires the
+saved session, TodoTasker opens a headless login only to Canvas and Microsoft’s
+approved HTTPS login domains, submits the encrypted credentials, and re-encrypts the
+renewed session. It never types them into a Canvas or third-party page. The scheduled
+authentication check warns you in Telegram only if this renewal fails (for example,
+after a password change or a new Microsoft challenge).
 
 ## 9. Verify each read-only connection
 
@@ -405,7 +401,7 @@ venv\Scripts\python.exe manage_secrets.py audit
 venv\Scripts\python.exe manage_secrets.py status
 venv\Scripts\python.exe canvas.py auth-check
 
-# Refresh the encrypted Canvas fallback session
+# Create the initial encrypted Canvas session (automatic renewal handles later expiry)
 venv\Scripts\python.exe canvas.py login
 
 # Fetch sources without producing a brief
@@ -425,10 +421,10 @@ venv\Scripts\python.exe brief.py watchdog
 
 ### Canvas session expired
 
-Run `venv\Scripts\python.exe canvas.py auth-check`. If the access token is invalid,
-create a replacement and store it with `manage_secrets.py set CANVAS_ACCESS_TOKEN`.
-If the encrypted fallback session has also expired, run `canvas.py login` and
-complete SSO again.
+Run `venv\Scripts\python.exe canvas.py auth-check`. TodoTasker automatically renews
+the encrypted Canvas session with its encrypted Microsoft credentials. If that fails, confirm
+your password has not changed and that Microsoft has not introduced a new sign-in
+challenge; then run `canvas.py login` once to establish a fresh browser session.
 
 ### Telegram setup finds no chat
 

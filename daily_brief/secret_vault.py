@@ -20,6 +20,8 @@ SECRET_NAMES = frozenset(
         "ANTHROPIC_API_KEY",
         "CANVAS_ACCESS_TOKEN",
         "ICAL_URL",
+        "MICROSOFT_EMAIL",
+        "MICROSOFT_PASSWORD",
         "NOTION_TOKEN",
         "TELEGRAM_BOT_TOKEN",
     }

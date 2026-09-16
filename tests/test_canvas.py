@@ -24,6 +24,7 @@ from daily_brief.canvas import (
     save_canvas_session,
     stable_identity,
     todo_submission_complete,
+    _trusted_microsoft_login_url,
     verify_session,
     window_planner_html,
 )
@@ -184,6 +185,81 @@ def test_expired_canvas_session_renews_through_microsoft() -> None:
     assert user["id"] == 42
     assert page.destination == "https://canvas.test/login/microsoft"
     assert page.closed is True
+
+
+def test_expired_session_uses_stored_credentials_only_on_microsoft() -> None:
+    responses = iter(
+        [
+            Response(200, ValueError(), headers={"content-type": "text/html"}),
+            Response(200, ValueError(), headers={"content-type": "text/html"}),
+            Response(200, {"id": 42, "name": "Student"}),
+        ]
+    )
+
+    class Request:
+        def get(self, *args, **kwargs):
+            return next(responses)
+
+    class Locator:
+        def __init__(self, selector):
+            self.selector = selector
+
+        @property
+        def first(self):
+            return self
+
+        def wait_for(self, **kwargs):
+            assert kwargs["state"] == "visible"
+
+        def fill(self, value):
+            filled.append((self.selector, value))
+
+        def click(self):
+            clicked.append(self.selector)
+
+    class Page:
+        url = ""
+        closed = False
+
+        def goto(self, _url, **_kwargs):
+            self.url = "https://login.microsoftonline.com/tenant/oauth2/authorize"
+
+        def wait_for_timeout(self, value):
+            waits.append(value)
+
+        def locator(self, selector):
+            return Locator(selector)
+
+        def close(self):
+            self.closed = True
+
+    filled, clicked, waits = [], [], []
+    page = Page()
+    context = type("Context", (), {"request": Request(), "new_page": lambda self: page})()
+
+    user = ensure_canvas_session(
+        context,
+        "https://canvas.test",
+        microsoft_email="student@example.test",
+        microsoft_password="password",
+        renewal_wait_ms=0,
+    )
+
+    assert user["id"] == 42
+    assert filled == [
+        ("input[type='email'], input[name='loginfmt'], #i0116", "student@example.test"),
+        ("input[type='password'], input[name='passwd'], #i0118", "password"),
+    ]
+    assert clicked == ["#idSIButton9, input[type='submit']"] * 2
+    assert waits == [1_500]
+    assert page.closed is True
+
+
+def test_microsoft_login_origin_is_strictly_allowlisted() -> None:
+    assert _trusted_microsoft_login_url("https://login.microsoftonline.com/tenant")
+    assert _trusted_microsoft_login_url("https://login.live.com/login.srf")
+    assert not _trusted_microsoft_login_url("https://example.test/login.microsoftonline.com")
+    assert not _trusted_microsoft_login_url("http://login.microsoftonline.com/tenant")
 
 
 def test_missing_saved_session_requires_login(tmp_path: Path) -> None:
