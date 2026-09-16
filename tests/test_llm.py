@@ -217,6 +217,37 @@ def test_malformed_response_gets_no_repair_call() -> None:
     assert session.post_calls == 1
 
 
+def test_anthropic_generation_uses_current_api_parameters() -> None:
+    class AnthropicSession(Session):
+        def post(self, *args, **kwargs):
+            self.post_calls += 1
+            self.payload = kwargs["json"]
+            return Response(
+                {
+                    "content": [
+                        {"type": "thinking", "thinking": ""},
+                        {"type": "text", "text": response_for(["assignment:1"])},
+                    ]
+                }
+            )
+
+    session = AnthropicSession("")
+    result = generate_guidance(
+        [task(1)],
+        [],
+        TOTALS,
+        date(2026, 9, 2),
+        provider="anthropic",
+        model="claude-sonnet-5",
+        anthropic_api_key="test-key",
+        session=session,
+    )
+
+    assert result is not None
+    assert session.post_calls == 1
+    assert "temperature" not in session.payload
+
+
 def test_zero_guidance_items_is_valid_and_still_one_call() -> None:
     session = Session('{"overview":"","task_guidance":[]}')
     result = generate_guidance([], [], {**TOTALS, "selected_count": 0}, date(2026, 9, 2), session=session)

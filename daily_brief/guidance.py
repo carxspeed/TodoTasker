@@ -288,7 +288,6 @@ def _anthropic_call(
             json={
                 "model": model,
                 "max_tokens": min(1200, max(256, 160 + 90 * len(request.keys))),
-                "temperature": 0.3,
                 "system": request.system,
                 "messages": [
                     {
@@ -300,7 +299,10 @@ def _anthropic_call(
             timeout=300,
         )
         response.raise_for_status()
-        return response.json()["content"][0]["text"]
+        for block in response.json().get("content", []):
+            if block.get("type") == "text" and isinstance(block.get("text"), str):
+                return block["text"]
+        raise LLMUnavailable("Anthropic returned no text guidance")
     except requests.RequestException as exc:
         raise LLMUnavailable("Anthropic is unavailable") from exc
 
