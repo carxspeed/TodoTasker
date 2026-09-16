@@ -509,6 +509,18 @@ def _complete_microsoft_login(page, email: str, password: str) -> None:
     page.locator("#idSIButton9, input[type='submit']").first.click()
 
 
+def _accept_microsoft_stay_signed_in(page) -> None:
+    """Accept Microsoft's recognized keep-session prompt after successful sign-in."""
+    prompt = page.locator("#KmsiDescription").first
+    if prompt.count() == 0 or not prompt.is_visible():
+        return
+    if not _trusted_microsoft_login_url(getattr(page, "url", "")):
+        raise CanvasError(
+            "SESSION_EXPIRED", "Microsoft sign-in origin changed", exit_code=2
+        )
+    page.locator("#idSIButton9").first.click()
+
+
 def _wait_for_canvas_session(
     page, context, base_url: str, *, attempts: int = 8, interval_ms: int = 2_000
 ) -> dict[str, Any]:
@@ -573,6 +585,7 @@ def ensure_canvas_session(
                 exit_code=2,
             )
         _complete_microsoft_login(page, microsoft_email, microsoft_password)
+        _accept_microsoft_stay_signed_in(page)
         return _wait_for_canvas_session(page, context, base)
     except CanvasError as exc:
         if exc.code == "SESSION_EXPIRED":
