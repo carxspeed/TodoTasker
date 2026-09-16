@@ -208,6 +208,9 @@ def test_expired_session_uses_stored_credentials_only_on_microsoft() -> None:
         def first(self):
             return self
 
+        def count(self):
+            return 1
+
         def wait_for(self, **kwargs):
             assert kwargs["state"] == "visible"
 
@@ -251,7 +254,7 @@ def test_expired_session_uses_stored_credentials_only_on_microsoft() -> None:
         ("input[type='password'], input[name='passwd'], #i0118", "password"),
     ]
     assert clicked == ["#idSIButton9, input[type='submit']"] * 2
-    assert waits == [1_500]
+    assert waits == []
     assert page.closed is True
 
 
@@ -260,6 +263,132 @@ def test_microsoft_login_origin_is_strictly_allowlisted() -> None:
     assert _trusted_microsoft_login_url("https://login.live.com/login.srf")
     assert not _trusted_microsoft_login_url("https://example.test/login.microsoftonline.com")
     assert not _trusted_microsoft_login_url("http://login.microsoftonline.com/tenant")
+
+
+def test_microsoft_account_picker_uses_another_account_before_filling_email() -> None:
+    responses = iter(
+        [
+            Response(200, ValueError(), headers={"content-type": "text/html"}),
+            Response(200, ValueError(), headers={"content-type": "text/html"}),
+            Response(200, {"id": 42}),
+        ]
+    )
+
+    class Request:
+        def get(self, *args, **kwargs):
+            return next(responses)
+
+    class Locator:
+        def __init__(self, selector):
+            self.selector = selector
+
+        @property
+        def first(self):
+            return self
+
+        def count(self):
+            return 0 if "type='email'" in self.selector else 1
+
+        def wait_for(self, **_kwargs):
+            return None
+
+        def fill(self, _value):
+            return None
+
+        def click(self):
+            clicks.append(self.selector)
+
+    class Page:
+        url = ""
+
+        def goto(self, *_args, **_kwargs):
+            self.url = "https://login.microsoftonline.com/tenant"
+
+        def locator(self, selector):
+            return Locator(selector)
+
+        def get_by_text(self, text, **_kwargs):
+            return Locator(text)
+
+        def wait_for_timeout(self, _value):
+            return None
+
+        def close(self):
+            return None
+
+    clicks = []
+    page = Page()
+    context = type("Context", (), {"request": Request(), "new_page": lambda self: page})()
+
+    assert ensure_canvas_session(
+        context,
+        "https://canvas.test",
+        microsoft_email="student@example.test",
+        microsoft_password="password",
+        renewal_wait_ms=0,
+    ) == {"id": 42}
+    assert clicks[0] == "Use another account"
+
+
+def test_microsoft_renewal_waits_for_the_canvas_redirect() -> None:
+    responses = iter(
+        [
+            Response(200, ValueError(), headers={"content-type": "text/html"}),
+            Response(200, ValueError(), headers={"content-type": "text/html"}),
+            Response(200, ValueError(), headers={"content-type": "text/html"}),
+            Response(200, ValueError(), headers={"content-type": "text/html"}),
+            Response(200, {"id": 42}),
+        ]
+    )
+
+    class Request:
+        def get(self, *args, **kwargs):
+            return next(responses)
+
+    class Locator:
+        @property
+        def first(self):
+            return self
+
+        def count(self):
+            return 1
+
+        def wait_for(self, **_kwargs):
+            return None
+
+        def fill(self, _value):
+            return None
+
+        def click(self):
+            return None
+
+    class Page:
+        url = ""
+
+        def goto(self, *_args, **_kwargs):
+            self.url = "https://login.microsoftonline.com/tenant"
+
+        def locator(self, _selector):
+            return Locator()
+
+        def wait_for_timeout(self, value):
+            waits.append(value)
+
+        def close(self):
+            return None
+
+    waits = []
+    page = Page()
+    context = type("Context", (), {"request": Request(), "new_page": lambda self: page})()
+
+    assert ensure_canvas_session(
+        context,
+        "https://canvas.test",
+        microsoft_email="student@example.test",
+        microsoft_password="password",
+        renewal_wait_ms=0,
+    ) == {"id": 42}
+    assert waits == [2_000, 2_000]
 
 
 def test_missing_saved_session_requires_login(tmp_path: Path) -> None:

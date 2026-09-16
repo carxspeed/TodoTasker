@@ -481,6 +481,14 @@ def _complete_microsoft_login(page, email: str, password: str) -> None:
     email_input = page.locator(
         "input[type='email'], input[name='loginfmt'], #i0116"
     ).first
+    if email_input.count() == 0:
+        use_another_account = page.get_by_text("Use another account", exact=True).first
+        use_another_account.wait_for(state="visible", timeout=10_000)
+        if not _trusted_microsoft_login_url(getattr(page, "url", "")):
+            raise CanvasError(
+                "SESSION_EXPIRED", "Microsoft sign-in origin changed", exit_code=2
+            )
+        use_another_account.click()
     email_input.wait_for(state="visible", timeout=20_000)
     if not _trusted_microsoft_login_url(getattr(page, "url", "")):
         raise CanvasError(
@@ -499,6 +507,32 @@ def _complete_microsoft_login(page, email: str, password: str) -> None:
         )
     password_input.fill(password)
     page.locator("#idSIButton9, input[type='submit']").first.click()
+
+
+def _wait_for_canvas_session(
+    page, context, base_url: str, *, attempts: int = 8, interval_ms: int = 2_000
+) -> dict[str, Any]:
+    """Wait for Microsoft to return to Canvas instead of assuming a fixed redirect speed."""
+    last_error: CanvasError | None = None
+    for attempt in range(attempts):
+        try:
+            return verify_session(context.request, base_url)
+        except CanvasError as exc:
+            if exc.code != "SESSION_EXPIRED":
+                raise
+            last_error = exc
+        if attempt + 1 < attempts:
+            page.wait_for_timeout(interval_ms)
+    assert last_error is not None
+    if _trusted_microsoft_login_url(getattr(page, "url", "")) and page.locator(
+        "input[type='email'], input[name='loginfmt'], #i0116"
+    ).count():
+        raise CanvasError(
+            "SESSION_EXPIRED",
+            "Microsoft returned to its sign-in form after the stored credentials were submitted",
+            exit_code=2,
+        )
+    raise last_error
 
 
 def ensure_canvas_session(
@@ -539,8 +573,7 @@ def ensure_canvas_session(
                 exit_code=2,
             )
         _complete_microsoft_login(page, microsoft_email, microsoft_password)
-        page.wait_for_timeout(1_500)
-        return verify_session(context.request, base)
+        return _wait_for_canvas_session(page, context, base)
     except CanvasError as exc:
         if exc.code == "SESSION_EXPIRED":
             raise CanvasError(
