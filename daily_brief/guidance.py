@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
+import time
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 import jsonschema
 import requests
@@ -21,6 +27,67 @@ CANVAS_INSTRUCTION_LIMIT = 800
 
 class LLMUnavailable(RuntimeError):
     pass
+
+
+def _is_local_ollama_url(base_url: str) -> bool:
+    """Only auto-launch a service that this computer will use locally."""
+    try:
+        host = (urlparse(base_url).hostname or "").casefold()
+    except ValueError:
+        return False
+    return host in {"localhost", "127.0.0.1", "::1"}
+
+
+def _find_ollama_executable() -> str | None:
+    """Find a normal Windows Ollama installation without requiring PATH setup."""
+    on_path = shutil.which("ollama")
+    if on_path:
+        return on_path
+    candidates = [
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama.exe",
+        Path(os.environ.get("ProgramFiles", "")) / "Ollama" / "ollama.exe",
+        Path(os.environ.get("ProgramFiles(x86)", "")) / "Ollama" / "ollama.exe",
+    ]
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                return str(candidate)
+        except OSError:
+            continue
+    return None
+
+
+def _start_ollama_service(session, *, base_url: str, wait_seconds: float = 20) -> bool:
+    """Start the local Ollama server and wait briefly for its health endpoint."""
+    if not _is_local_ollama_url(base_url):
+        return False
+    executable = _find_ollama_executable()
+    if not executable:
+        return False
+    try:
+        kwargs: dict[str, Any] = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        else:
+            kwargs["start_new_session"] = True
+        subprocess.Popen([executable, "serve"], **kwargs)
+    except OSError:
+        return False
+
+    endpoint = f"{base_url.rstrip('/')}/api/tags"
+    deadline = time.monotonic() + wait_seconds
+    while time.monotonic() < deadline:
+        try:
+            if session.get(endpoint, timeout=3).status_code < 400:
+                return True
+        except requests.RequestException:
+            pass
+        time.sleep(0.5)
+    return False
 
 
 @dataclass(frozen=True)
@@ -166,7 +233,12 @@ def _local_call(session, request: GuidanceRequest, *, base_url: str, model: str)
     try:
         tags = session.get(f"{base_url.rstrip('/')}/api/tags", timeout=3)
         if tags.status_code >= 400:
+            if not _start_ollama_service(session, base_url=base_url):
+                raise LLMUnavailable("Ollama is unavailable")
+    except requests.RequestException:
+        if not _start_ollama_service(session, base_url=base_url):
             raise LLMUnavailable("Ollama is unavailable")
+    try:
         response = session.post(
             f"{base_url.rstrip('/')}/api/chat",
             json={

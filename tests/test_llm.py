@@ -2,7 +2,9 @@ import json
 from datetime import date, datetime, timezone
 
 import pytest
+import requests
 
+import daily_brief.guidance as guidance
 from daily_brief.guidance import (
     CANVAS_INSTRUCTION_LIMIT,
     PROMPT_LIMIT,
@@ -175,6 +177,37 @@ def test_local_generation_makes_exactly_one_chat_call() -> None:
     assert session.post_calls == 1
     assert session.payload["think"] is False
     assert "tools" not in session.payload
+
+
+def test_local_generation_starts_ollama_when_service_is_off(monkeypatch) -> None:
+    request = build_guidance_request([task(1)], [], TOTALS, date(2026, 9, 2))
+
+    class StartsThenWorks(Session):
+        def get(self, *args, **kwargs):
+            self.get_calls += 1
+            if self.get_calls == 1:
+                raise requests.ConnectionError("Ollama is off")
+            return Response({"models": []})
+
+    session = StartsThenWorks(response_for(request.keys))
+    started: list[str] = []
+    monkeypatch.setattr(
+        guidance,
+        "_start_ollama_service",
+        lambda _session, *, base_url: started.append(base_url) or True,
+    )
+
+    result = generate_guidance([task(1)], [], TOTALS, date(2026, 9, 2), session=session)
+
+    assert result is not None
+    assert started == ["http://localhost:11434"]
+    assert session.post_calls == 1
+
+
+def test_ollama_autostart_never_targets_a_remote_server() -> None:
+    assert guidance._is_local_ollama_url("http://localhost:11434")
+    assert guidance._is_local_ollama_url("http://127.0.0.1:11434")
+    assert not guidance._is_local_ollama_url("https://example.com")
 
 
 def test_malformed_response_gets_no_repair_call() -> None:
