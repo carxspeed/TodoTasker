@@ -56,7 +56,10 @@ def _focus_items(
             return [by_key[key] for key in keys], guidance.focus.reason
     if not selected:
         return [], ""
-    primary = selected[0]
+    imminent = next((item for item in selected if item.kind == "planner_assessment"), None)
+    if imminent is not None:
+        rest = [item for item in selected if item.key != imminent.key][:2]
+        return [imminent, *rest], "An imminent assessment needs study preparation before ordinary overdue work."
     return selected[:3], "Start with the nearest required task, then continue only if time remains."
 
 

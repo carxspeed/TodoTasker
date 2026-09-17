@@ -12,7 +12,7 @@ from daily_brief.guidance import (
     generate_guidance,
     validate_guidance_text,
 )
-from daily_brief.models import ClassifiedItem, FreeWindow
+from daily_brief.models import ClassifiedItem, FocusPlan, FreeWindow, GuidanceResult
 
 
 def task(index: int, *, description="", next_step="", user_notes="") -> ClassifiedItem:
@@ -100,6 +100,40 @@ def test_request_uses_first_ten_keys_and_exact_totals() -> None:
     assert request.keys == [f"assignment:{index}" for index in range(10)]
     assert request.moved_to_fallback == ["assignment:10", "assignment:11"]
     assert set(request.user["DATA"]["workload_totals"]) == set(TOTALS)
+
+
+def test_imminent_assessment_is_included_before_ordinary_backlog() -> None:
+    selected = [task(index) for index in range(10)]
+    assessment = task(99).model_copy(
+        update={
+            "key": "planner-assessment:quiz",
+            "kind": "planner_assessment",
+            "due_at": datetime(2026, 9, 3, tzinfo=timezone.utc),
+        }
+    )
+    request = build_guidance_request([*selected, assessment], [], {**TOTALS, "selected_count": 11}, date(2026, 9, 2))
+    assert request.keys[0] == "planner-assessment:quiz"
+    assert "assignment:9" in request.moved_to_fallback
+
+
+def test_imminent_assessment_overrides_a_model_focus_on_old_work() -> None:
+    assessment = task(99).model_copy(
+        update={
+            "key": "planner-assessment:quiz",
+            "kind": "planner_assessment",
+            "due_at": datetime(2026, 9, 3, tzinfo=timezone.utc),
+        }
+    )
+    result = GuidanceResult(
+        focus=FocusPlan(
+            primary_key="assignment:1",
+            reason="Small task.",
+            today_keys=["assignment:1"],
+        )
+    )
+    focused = guidance._enforce_assessment_focus(result, [task(1), assessment], date(2026, 9, 2))
+    assert focused.focus is not None
+    assert focused.focus.primary_key == "planner-assessment:quiz"
 
 
 def test_large_request_is_bounded_without_dropping_retained_fields() -> None:
