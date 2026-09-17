@@ -221,6 +221,17 @@ def _bounded(value: str, limit: int) -> str:
     return normalized if len(normalized) <= limit else normalized[: limit - 3].rstrip() + "..."
 
 
+def clean_notion_next_step(value: str) -> str:
+    """Return the user-owned action without presentation prefixes from older runs."""
+    text = _bounded(value, 1000)
+    return re.sub(
+        r"^(?:start with this next step:\s*)+",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
+
+
 def compact_instruction_summary(value: str, limit: int = 400) -> str:
     """Create a readable fallback when model-generated summary text is unavailable."""
     text = re.sub(r"[*_#`]+", "", value or "")
@@ -334,7 +345,9 @@ def notion_master_task_fields(
         "Priority": details.get("Priority") or "Later",
         "Effort": details.get("Effort") or item.effort,
         "Kind": item.type or "Task",
-        "Next step": _bounded(details.get("Next step") or item.next_step, 1000),
+        # Keep this field user-owned. Generated guidance is presentation data and
+        # must not become the input to the next planning run.
+        "Next step": clean_notion_next_step(item.next_step),
         "Instructions": "",
         "Needs verification": False,
         "Cadence": item.cadence,
@@ -1048,7 +1061,9 @@ class NotionSchoolBoard:
                     type=item_type or None,
                     cadence=_property_select(page, "Cadence") or None,
                     last_touched=last_touched,
-                    next_step=_bounded(_property_rich_text(page, "Next step"), 1000),
+                    next_step=clean_notion_next_step(
+                        _property_rich_text(page, "Next step")
+                    ),
                     deadline=deadline,
                     effort=effort,
                 )

@@ -19,6 +19,7 @@ from daily_brief.notion import (
     rich_text_property,
     master_task_properties,
     master_task_schema,
+    notion_master_task_fields,
     school_assignment_fields,
     school_database_schema,
     school_properties,
@@ -237,6 +238,24 @@ def test_master_sync_creates_one_database_and_preserves_user_fields_on_updates()
     assert all(fields["Notes / progress"] == "" for fields in created_fields)
 
 
+def test_notion_master_fields_keep_raw_next_step_instead_of_generated_guidance() -> None:
+    item = NotionWorkItem(
+        key="notion:work",
+        page_id="work",
+        url="https://notion.test/work",
+        name="Prepare weekly update",
+        area="Work",
+        next_step="Start with this next step: Draft three bullets.",
+    )
+
+    fields = notion_master_task_fields(
+        item,
+        {"Next step": "Start with this next step: Start with this next step: Draft three bullets."},
+    )
+
+    assert fields["Next step"] == "Draft three bullets."
+
+
 def test_master_migration_preserves_legacy_done_and_notes_on_create() -> None:
     assignment = load_fixture("fixtures/sample_todo.json").assignments[0]
     fake = FakeSchoolClient()
@@ -331,7 +350,10 @@ def test_master_work_uses_the_master_database_and_adopts_manual_rows() -> None:
                 "Cadence": select_prop(None),
                 "Due": date_prop("2026-09-18"),
                 "Last touched": date_prop(None),
-                "Next step": text_prop("rich_text", "Send a short follow-up."),
+                "Next step": text_prop(
+                    "rich_text",
+                    "Start with this next step: Start with this next step: Send a short follow-up.",
+                ),
             },
         },
         {
