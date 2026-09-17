@@ -1122,6 +1122,11 @@ class NotionSchoolBoard:
                 missing.append(item.key)
                 continue
             reason = focus_reason if rank == 1 else ""
+            fallback_step = (
+                "Study the topics listed in the class planner, then do a short practice check."
+                if item.kind == "planner_assessment"
+                else "Open the task and begin."
+            )
             self.client.update_master_task(
                 current[0],
                 {
@@ -1132,7 +1137,7 @@ class NotionSchoolBoard:
                     "Next step": _bounded(
                         guidance.get(item.key)
                         or item.next_step
-                        or "Open the task and begin.",
+                        or fallback_step,
                         1000,
                     ),
                 },

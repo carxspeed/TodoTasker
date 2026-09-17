@@ -476,7 +476,6 @@ def test_master_focus_prioritizes_assessment_and_targets_its_real_assignment() -
 
     result = board.sync_master_focus(
         classification,
-        guidance_by_key={assessment.key: "Study chapter 12, then check two problems."},
         source_id_by_focus_key={assessment.key: "assignment:quiz-2"},
         target_date=date(2026, 9, 17),
     )
@@ -485,7 +484,9 @@ def test_master_focus_prioritizes_assessment_and_targets_its_real_assignment() -
     assert fake.updated_rows[0][0] == "quiz-row"
     assert fake.updated_rows[0][1]["Focus rank"] == 1
     assert "imminent assessment" in fake.updated_rows[0][1]["Focus reason"]
-    assert fake.updated_rows[0][1]["Next step"].startswith("Study chapter 12")
+    assert fake.updated_rows[0][1]["Next step"].startswith(
+        "Study the topics listed in the class planner"
+    )
 
 
 def test_school_context_reads_notes_and_status_without_canvas_bookkeeping() -> None:
