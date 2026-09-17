@@ -738,6 +738,30 @@ def test_planner_windowing_is_structural_and_creates_quiz_event() -> None:
     assert len(result.events) == 1
 
 
+def test_planner_recognizes_common_assessment_labels() -> None:
+    body = """
+    <table><tr><th>Date</th><th>Work</th></tr>
+      <tr><td>9/3 Th</td><td>MCQ practice</td></tr>
+      <tr><td>9/4 F</td><td>FRQ timed write</td></tr>
+      <tr><td>9/5 Sa</td><td>Multiple-choice assessment</td></tr>
+    </table>
+    """
+    result = window_planner_html(
+        body,
+        course_id=1,
+        course="English",
+        title="Week at a Glance",
+        url="https://canvas.test/planner",
+        target_date=date(2026, 9, 2),
+        title_matched=True,
+    )
+    assert [event.date for event in result.events] == [
+        date(2026, 9, 3),
+        date(2026, 9, 4),
+        date(2026, 9, 5),
+    ]
+
+
 def test_generic_undated_front_page_is_discarded() -> None:
     result = window_planner_html(
         "<p>Welcome to class. Read the syllabus.</p>",

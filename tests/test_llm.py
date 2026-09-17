@@ -43,6 +43,15 @@ def response_for(keys):
     return json.dumps(
         {
             "overview": "Use the available window.",
+            "focus": (
+                {
+                    "primary_key": keys[0],
+                    "reason": "It is first in the validated priority order.",
+                    "today_keys": keys[:3],
+                }
+                if keys
+                else None
+            ),
             "task_guidance": [
                 {
                     "key": key,
@@ -139,6 +148,11 @@ def test_canvas_unknown_guidance_is_rejected() -> None:
     response = json.dumps(
         {
             "overview": "",
+            "focus": {
+                "primary_key": "assignment:1",
+                "reason": "It is the only selected task.",
+                "today_keys": ["assignment:1"],
+            },
             "task_guidance": [
                 {
                     "key": "assignment:1",
@@ -157,6 +171,11 @@ def test_summary_is_backward_compatible_when_model_omits_it() -> None:
     response = json.dumps(
         {
             "overview": "",
+            "focus": {
+                "primary_key": "assignment:1",
+                "reason": "It is the only selected task.",
+                "today_keys": ["assignment:1"],
+            },
             "task_guidance": [
                 {"key": "assignment:1", "guidance": "Open the worksheet and begin."}
             ],
@@ -166,6 +185,31 @@ def test_summary_is_backward_compatible_when_model_omits_it() -> None:
     result = validate_guidance_text(response, request)
 
     assert result.task_guidance[0].summary == ""
+
+
+def test_focus_is_limited_to_known_keys_with_the_primary_first() -> None:
+    request = build_guidance_request([task(1), task(2)], [], {**TOTALS, "selected_count": 2}, date(2026, 9, 2))
+    response = json.loads(response_for(request.keys))
+    response["focus"] = {
+        "primary_key": "assignment:2",
+        "reason": "It is the nearer assessment.",
+        "today_keys": ["assignment:2", "assignment:1"],
+    }
+    result = validate_guidance_text(json.dumps(response), request)
+    assert result.focus is not None
+    assert result.focus.today_keys == ["assignment:2", "assignment:1"]
+
+
+def test_focus_primary_must_be_first() -> None:
+    request = build_guidance_request([task(1), task(2)], [], {**TOTALS, "selected_count": 2}, date(2026, 9, 2))
+    response = json.loads(response_for(request.keys))
+    response["focus"] = {
+        "primary_key": "assignment:2",
+        "reason": "It is the nearer assessment.",
+        "today_keys": ["assignment:1", "assignment:2"],
+    }
+    with pytest.raises(ValueError, match="primary task"):
+        validate_guidance_text(json.dumps(response), request)
 
 
 def test_local_generation_makes_exactly_one_chat_call() -> None:
@@ -273,7 +317,7 @@ def test_anthropic_generation_retries_one_invalid_structured_response() -> None:
 
 
 def test_zero_guidance_items_is_valid_and_still_one_call() -> None:
-    session = Session('{"overview":"","task_guidance":[]}')
+    session = Session('{"overview":"","focus":null,"task_guidance":[]}')
     result = generate_guidance([], [], {**TOTALS, "selected_count": 0}, date(2026, 9, 2), session=session)
     assert result is not None and result.task_guidance == []
     assert session.post_calls == 1

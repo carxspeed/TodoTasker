@@ -1,7 +1,7 @@
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
-from daily_brief.models import ClassificationOutput, ClassifiedItem, GuidanceItem, GuidanceResult
+from daily_brief.models import ClassificationOutput, ClassifiedItem, FocusPlan, GuidanceItem, GuidanceResult
 from daily_brief.render import render_brief
 
 
@@ -61,3 +61,21 @@ def test_canvas_tasks_show_course_and_local_deadline() -> None:
     text = render_brief(classification([canvas]))
     assert "Course: AP Physics" in text
     assert "due Fri Sep 4, 21:00 PDT" in text
+
+
+def test_focus_hides_the_large_backlog_but_preserves_the_primary_reason() -> None:
+    items = [item(f"assignment:{number}") for number in range(1, 5)]
+    guidance = GuidanceResult(
+        focus=FocusPlan(
+            primary_key="assignment:2",
+            reason="It is the nearest assessment.",
+            today_keys=["assignment:2", "assignment:3"],
+        )
+    )
+    text = render_brief(classification(items), guidance=guidance)
+    assert "Today's focus" in text
+    assert "Why: It is the nearest assessment." in text
+    assert "Canonical assignment:2" in text
+    assert "Canonical assignment:3" in text
+    assert "Canonical assignment:1" not in text
+    assert "Defer without guilt: 2 other selected task(s)" in text

@@ -213,9 +213,18 @@ class GuidanceItem(Contract):
     summary: str = Field(default="", max_length=400)
 
 
+class FocusPlan(Contract):
+    """A small, model-curated subset of Python's already-valid task list."""
+
+    primary_key: str = Field(min_length=1)
+    reason: str = Field(min_length=1, max_length=240)
+    today_keys: list[str] = Field(min_length=1, max_length=3)
+
+
 class GuidanceResult(Contract):
     overview: str = Field(default="", max_length=300)
     task_guidance: list[GuidanceItem] = Field(default_factory=list)
+    focus: FocusPlan | None = None
 
 
 class PreparedSources(Contract):
@@ -232,6 +241,7 @@ class PreparedArtifact(Contract):
     prepared_at: AwareDatetime
     rendered_brief: str
     guidance: dict[str, str] = Field(default_factory=dict)
+    focus: FocusPlan | None = None
     classification: ClassificationOutput
     sources: PreparedSources
     warnings: list[str] = Field(default_factory=list)

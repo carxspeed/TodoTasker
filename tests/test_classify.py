@@ -9,6 +9,7 @@ from daily_brief.models import (
     Capacity,
     FreeWindow,
     NotionWorkItem,
+    PlannerEvent,
     Promotion,
     SeenAssignment,
 )
@@ -87,6 +88,21 @@ def test_canvas_24_hour_boundary_is_must_and_missing_due_is_may() -> None:
     result = run([canvas_item("assignment:1", due_hours=24), canvas_item("assignment:2", due_hours=None)])
     assert selected_tier(result, "assignment:1") == "must"
     assert selected_tier(result, "assignment:2") == "may"
+
+
+def test_tomorrows_weekly_quiz_becomes_a_study_task_today() -> None:
+    event = PlannerEvent(
+        course="Calculus",
+        title="9/3 Th Quiz 2",
+        date=date(2026, 9, 3),
+        text="9/3 Th Quiz 2",
+        url="https://canvas.test/week-at-a-glance",
+    )
+    result = run(planner_events=[event])
+    study = next(item for item in result.must if item.kind == "planner_assessment")
+    assert study.name == "Study for Quiz 2"
+    assert study.course == "Calculus"
+    assert study.url == event.url
 
 
 def test_only_explicit_large_override_gets_48_hour_must_rule() -> None:

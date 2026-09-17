@@ -50,7 +50,12 @@ WEEKDAY = r"(?:M|T|W|Th|F|Sa|Su|Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wedne
 WEEKDAY_RE = re.compile(rf"\b{WEEKDAY}\b", re.IGNORECASE)
 REJECT_DATE_CONTEXT = re.compile(r"score|points|pts|out of|fraction|read|chapter|problem", re.I)
 PLANNER_TITLE_RE = re.compile(r"planner|week at a glance|agenda|schedule|calendar", re.I)
-ASSESSMENT_RE = re.compile(r"\b(?:quiz|test|exam|assessment)\b", re.I)
+# Schools label assessments inconsistently, especially in weekly schedules.  Keep
+# this word-boundary based so ordinary words such as "testing" do not turn into tasks.
+ASSESSMENT_RE = re.compile(
+    r"\b(?:quiz(?:zes)?|test(?:ing)?|exam(?:ination)?|assessment|mcq|multiple[ -]choice|frq|free[ -]response|timed[ -](?:write|writing|essay)|midterm|final)\b",
+    re.I,
+)
 STORAGE_STATE_FILENAME = "storage-state.dpapi"
 LEGACY_STORAGE_STATE_FILENAME = "storage-state.json"
 CANVAS_STATE_MAGIC = b"TODO-TASKER-CANVAS-DPAPI\x01\n"

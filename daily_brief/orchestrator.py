@@ -416,6 +416,7 @@ class DailyBriefOrchestrator:
             existing_promotion=state.promoted,
             free_windows=bundle.calendar.free_windows if bundle.calendar else None,
             calendar_target_date=bundle.calendar.target_date if bundle.calendar else None,
+            planner_events=bundle.canvas.planner_events if bundle.canvas else (),
         )
 
     @staticmethod
@@ -478,6 +479,7 @@ class DailyBriefOrchestrator:
             prepared_at=now,
             rendered_brief=rendered,
             guidance=all_guidance,
+            focus=result.focus if result else None,
             classification=classification,
             sources=PreparedSources(
                 canvas=bundle.canvas,
@@ -532,6 +534,7 @@ class DailyBriefOrchestrator:
                     for item in self._selected(classification)
                     if item.key in prepared.guidance
                 ],
+                focus=prepared.focus,
             )
         warnings = list(bundle.warnings)
         if state.last_delivered and now - state.last_delivered > timedelta(hours=36):
@@ -602,6 +605,7 @@ class DailyBriefOrchestrator:
                 plan_result = self.notion_delivery.sync_daily_plan(
                     classification,
                     guidance_by_key=guidance_by_key,
+                    focus_keys=(guidance.focus.today_keys if guidance and guidance.focus else None),
                     target_date=target_date,
                 )
                 delivery.notion_page_id = plan_result.page_id

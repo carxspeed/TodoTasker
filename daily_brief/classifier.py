@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
+import re
 from typing import Iterable, Literal
 from zoneinfo import ZoneInfo
 
@@ -14,6 +15,7 @@ from .models import (
     ClassifiedItem,
     FreeWindow,
     NotionWorkItem,
+    PlannerEvent,
     Promotion,
     SeenAssignment,
 )
@@ -134,6 +136,50 @@ def _classify_notion(
         next_step=item.next_step,
         url=item.url,
         overdue_periods=overdue_periods,
+    )
+
+
+def _planner_assessment_key(event: PlannerEvent) -> str:
+    normalized = " ".join(event.title.casefold().split())
+    return f"planner-assessment:{event.course.casefold()}:{event.date.isoformat()}:{normalized}"
+
+
+def _assessment_label(title: str) -> str:
+    """Remove the schedule prefix without guessing details that Canvas did not provide."""
+    label = " ".join(title.split())
+    label = re.sub(
+        r"^\d{1,2}/\d{1,2}(?:/\d{2,4})?\s+(?:(?:M|T|W|Th|F|Sa|Su|Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+)?",
+        "",
+        label,
+        flags=re.I,
+    )
+    return label or "assessment"
+
+
+def _classify_planner_assessment(
+    event: PlannerEvent, *, as_of: datetime, timezone_name: str
+) -> ClassifiedItem:
+    """Turn a Week-at-a-Glance assessment into a prep task before it arrives."""
+    local_zone = ZoneInfo(timezone_name)
+    assessment_at = datetime.combine(event.date, time(8), local_zone)
+    delta = _deadline_delta(assessment_at, as_of)
+    # Assessments need preparation the previous day, rather than appearing only at the deadline.
+    tier: Literal["must", "smart", "may"] = "must" if delta is not None and delta <= timedelta(hours=48) else "smart"
+    label = _assessment_label(event.title)
+    return ClassifiedItem(
+        key=_planner_assessment_key(event),
+        source="canvas",
+        name=f"Study for {label}",
+        tier=tier,
+        effort="M",
+        effort_hours=EFFORT_HOURS["M"],
+        effort_source="points",
+        kind="planner_assessment",
+        due_at=assessment_at,
+        course=event.course,
+        description=event.text,
+        url=event.url,
+        submission_status="unsubmitted",
     )
 
 
@@ -266,6 +312,7 @@ def classify(
     existing_promotion: Promotion | None = None,
     free_windows: list[FreeWindow] | None = None,
     calendar_target_date: date | None = None,
+    planner_events: Iterable[PlannerEvent] = (),
 ) -> ClassificationOutput:
     if as_of.tzinfo is None or as_of.utcoffset() is None:
         raise ValueError("as_of must be timezone-aware")
@@ -282,6 +329,16 @@ def classify(
             verify_keys.add(raw.key)
     classified.extend(
         _classify_notion(raw, target_date, as_of, timezone_name) for raw in notion_items
+    )
+    assessment_events: dict[str, PlannerEvent] = {}
+    for event in planner_events:
+        # A same-day assessment is useful, but the daily brief only needs a prep prompt
+        # for today and tomorrow. Later dates remain in the calendar-style "Coming up" list.
+        if target_date <= event.date <= target_date + timedelta(days=1):
+            assessment_events.setdefault(_planner_assessment_key(event), event)
+    classified.extend(
+        _classify_planner_assessment(event, as_of=as_of, timezone_name=timezone_name)
+        for event in assessment_events.values()
     )
     classified, promotion = _apply_promotion(
         classified,

@@ -23,7 +23,7 @@ EFFORTS = ["S", "M", "L"]
 SCHOOL_STATUSES = ["To do", "Verify", "Done"]
 SCHOOL_PRIORITIES = ["MUST", "SMART", "MAY", "Later", "Verify"]
 SCHOOL_KINDS = ["assignment", "quiz", "discussion_topic", "sub_assignment"]
-DAILY_PLAN_TITLE = "Today's Plan"
+DAILY_PLAN_TITLE = "Today's Focus"
 DAILY_PLAN_STATUSES = ["To do", "Done"]
 
 
@@ -768,9 +768,10 @@ class NotionSchoolBoard:
         classification: Any,
         *,
         guidance_by_key: dict[str, str] | None = None,
+        focus_keys: list[str] | None = None,
         target_date: date,
     ) -> DailyPlanSyncResult:
-        """Mirror the already-ordered daily brief into a compact Notion dashboard."""
+        """Mirror only the humane 1–3 task focus into its own Notion dashboard."""
         root = self.client.retrieve_page(self.parent_page_id)
         dashboard_url = str(root.get("url") or f"https://www.notion.so/{self.parent_page_id}")
         database_id = self._daily_plan_database()
@@ -800,40 +801,47 @@ class NotionSchoolBoard:
                 existing[task_id] = (page_id, _property_select(page, "Status"))
 
         guidance = guidance_by_key or {}
+        ordered = [*classification.must, *classification.smart, *classification.may]
+        items_by_key = {item.key: item for item in ordered}
+        requested = focus_keys or [item.key for item in ordered[:3]]
+        focus_items = []
+        seen_focus: set[str] = set()
+        for key in requested:
+            if key in items_by_key and key not in seen_focus and len(focus_items) < 3:
+                focus_items.append(items_by_key[key])
+                seen_focus.add(key)
+        if not focus_items:
+            focus_items = ordered[:3]
+
         active_ids: set[str] = set()
         rank = 0
-        for priority, items in (
-            ("MUST", classification.must),
-            ("SMART", classification.smart),
-            ("MAY", classification.may),
-        ):
-            for item in items:
-                rank += 1
-                active_ids.add(item.key)
-                fields = {
-                    "Task": _bounded(item.name, 500),
-                    "Priority": priority,
-                    "Course / area": _bounded(item.course or item.source.title(), 200),
-                    "Time (hours)": item.effort_hours,
-                    "Next step": _bounded(
-                        guidance.get(item.key) or item.next_step or "Open the task and begin.",
-                        500,
-                    ),
-                    "Status": "To do",
-                    "Source": item.url or None,
-                    "Plan date": target_date,
-                    "Task ID": item.key,
-                    "Rank": rank,
-                }
-                current = existing.get(item.key)
-                if current:
-                    if current[1] == "Done":
-                        fields["Status"] = "Done"
-                    self.client.update_daily_plan_item(current[0], fields)
-                    result.rows_updated += 1
-                else:
-                    self.client.create_daily_plan_item(database_id, fields)
-                    result.rows_created += 1
+        for item in focus_items:
+            rank += 1
+            active_ids.add(item.key)
+            fields = {
+                "Task": _bounded(item.name, 500),
+                "Priority": item.tier.upper(),
+                "Course / area": _bounded(item.course or item.source.title(), 200),
+                "Time (hours)": item.effort_hours,
+                "Next step": _bounded(
+                    guidance.get(item.key) or item.next_step or "Open the task and begin.",
+                    500,
+                ),
+                "Status": "To do",
+                "Source": item.url or None,
+                "Plan date": target_date,
+                "Task ID": item.key,
+                "Rank": rank,
+            }
+            current = existing.get(item.key)
+            if current:
+                if current[1] == "Done":
+                    fields["Status"] = "Done"
+                self.client.update_daily_plan_item(current[0], fields)
+                result.rows_updated += 1
+            else:
+                self.client.create_daily_plan_item(database_id, fields)
+                result.rows_created += 1
 
         for task_id, (page_id, _status) in existing.items():
             if task_id not in active_ids:

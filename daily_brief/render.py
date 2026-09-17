@@ -39,6 +39,27 @@ def _render_task(
     return lines
 
 
+def _focus_items(
+    classification: ClassificationOutput, guidance: GuidanceResult | None
+) -> tuple[list[ClassifiedItem], str]:
+    """Keep the delivered brief humane while the full source tables remain intact."""
+    selected = [*classification.must, *classification.smart, *classification.may]
+    by_key = {item.key: item for item in selected}
+    if guidance and guidance.focus:
+        keys = guidance.focus.today_keys
+        if (
+            keys
+            and keys[0] == guidance.focus.primary_key
+            and len(keys) == len(set(keys))
+            and all(key in by_key for key in keys)
+        ):
+            return [by_key[key] for key in keys], guidance.focus.reason
+    if not selected:
+        return [], ""
+    primary = selected[0]
+    return selected[:3], "Start with the nearest required task, then continue only if time remains."
+
+
 def render_brief(
     classification: ClassificationOutput,
     *,
@@ -68,15 +89,20 @@ def render_brief(
     } if guidance else {}
     if guidance and guidance.overview:
         lines.extend(["", guidance.overview])
-    for title, items in (
-        ("MUST", classification.must),
-        ("SMART", classification.smart),
-        ("MAY", classification.may),
-    ):
-        if items:
-            lines.extend(["", title])
-            for item in items:
+    focus_items, focus_reason = _focus_items(classification, guidance)
+    if focus_items:
+        lines.extend(["", "Today's focus"])
+        primary = focus_items[0]
+        lines.append(f"Start here: {primary.name}")
+        lines.append(f"Why: {focus_reason}")
+        lines.extend(_render_task(primary, guidance_by_key, display_timezone))
+        if len(focus_items) > 1:
+            lines.append("If you finish")
+            for item in focus_items[1:]:
                 lines.extend(_render_task(item, guidance_by_key, display_timezone))
+        deferred = max(0, len(classification.must) + len(classification.smart) + len(classification.may) - len(focus_items))
+        if deferred:
+            lines.append(f"Defer without guilt: {deferred} other selected task(s) remain in your Notion backlog.")
     if classification.momentum_deferred:
         item = classification.momentum_deferred
         lines.extend(
