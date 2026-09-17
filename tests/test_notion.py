@@ -310,6 +310,117 @@ def test_master_context_reads_done_notes_and_page_url() -> None:
     }
 
 
+def test_master_work_uses_the_master_database_and_adopts_manual_rows() -> None:
+    fake = FakeSchoolClient()
+    fake.children = [
+        {"type": "child_database", "id": "master", "child_database": {"title": "Tasks"}}
+    ]
+    fake.query_database_pages = lambda _database_id: [
+        {
+            "id": "manual-row",
+            "url": "https://notion.test/manual-row",
+            "properties": {
+                "Task": text_prop("title", "Call the internship coordinator"),
+                "Done": {"type": "checkbox", "checkbox": False},
+                "Area": select_prop("Connections"),
+                "Source type": select_prop(None),
+                "Source ID": text_prop("rich_text", ""),
+                "Task type": select_prop("Task"),
+                "Kind": text_prop("rich_text", ""),
+                "Effort": select_prop("S"),
+                "Cadence": select_prop(None),
+                "Due": date_prop("2026-09-18"),
+                "Last touched": date_prop(None),
+                "Next step": text_prop("rich_text", "Send a short follow-up."),
+            },
+        },
+        {
+            "id": "canvas-row",
+            "properties": {
+                "Source type": select_prop("Canvas"),
+                "Done": {"type": "checkbox", "checkbox": False},
+            },
+        },
+    ]
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    snapshot = board.get_master_work()
+
+    assert len(snapshot.items) == 1
+    item = snapshot.items[0]
+    assert item.key == "notion:manualrow"
+    assert item.area == "Connections"
+    assert item.deadline == date(2026, 9, 18)
+    assert item.next_step == "Send a short follow-up."
+
+
+def test_master_focus_marks_three_or_fewer_and_clears_old_focus_without_archiving() -> None:
+    assignment = load_fixture("fixtures/sample_todo.json").assignments[0]
+    from daily_brief.models import ClassificationOutput, ClassifiedItem
+    from datetime import datetime, timezone
+
+    item = ClassifiedItem(
+        key=assignment.key,
+        source="canvas",
+        name=assignment.name,
+        tier="must",
+        effort="M",
+        effort_hours=1.5,
+        effort_source="points",
+        course=assignment.course,
+        url=assignment.url,
+    )
+    classification = ClassificationOutput(
+        target_date=date(2026, 9, 17),
+        as_of=datetime(2026, 9, 17, tzinfo=timezone.utc),
+        must=[item],
+    )
+    fake = FakeSchoolClient()
+    fake.children = [
+        {"type": "child_database", "id": "master", "child_database": {"title": "Tasks"}}
+    ]
+    fake.query_database_pages = lambda _database_id: [
+        {
+            "id": "current",
+            "properties": {
+                "Source ID": text_prop("rich_text", assignment.key),
+                "Focus date": date_prop(None),
+                "Focus rank": {"type": "number", "number": None},
+                "Focus reason": text_prop("rich_text", ""),
+            },
+        },
+        {
+            "id": "stale",
+            "properties": {
+                "Source ID": text_prop("rich_text", "assignment:stale"),
+                "Focus date": date_prop("2026-09-16"),
+                "Focus rank": {"type": "number", "number": 1},
+                "Focus reason": text_prop("rich_text", "Old reason"),
+            },
+        },
+    ]
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    result = board.sync_master_focus(
+        classification,
+        guidance_by_key={assignment.key: "Finish requirement one."},
+        focus_reason="It is due first.",
+        target_date=date(2026, 9, 17),
+    )
+
+    assert result.rows_focused == 1
+    assert result.rows_cleared == 1
+    assert result.missing_source_ids == ()
+    assert fake.updated_rows[0][0] == "current"
+    assert fake.updated_rows[0][1]["Focus rank"] == 1
+    assert fake.updated_rows[0][1]["Focus reason"] == "It is due first."
+    assert fake.updated_rows[1] == (
+        "stale",
+        {"Focus date": None, "Focus rank": None, "Focus reason": ""},
+    )
+    assert fake.archived_rows == []
+
+
 def test_school_context_reads_notes_and_status_without_canvas_bookkeeping() -> None:
     fake = FakeSchoolClient()
     fake.children = [

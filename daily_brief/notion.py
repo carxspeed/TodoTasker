@@ -72,6 +72,15 @@ class MasterTaskSyncResult:
     task_urls: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass
+class MasterFocusSyncResult:
+    page_id: str
+    url: str
+    rows_focused: int = 0
+    rows_cleared: int = 0
+    missing_source_ids: tuple[str, ...] = ()
+
+
 @dataclass(frozen=True)
 class MasterMigrationSummary:
     canvas_rows: int
@@ -800,6 +809,17 @@ def _property_rich_text(page: dict[str, Any], name: str) -> str:
     )
 
 
+def _property_title(page: dict[str, Any], name: str) -> str:
+    properties = page.get("properties") or {}
+    prop = properties.get(name) or {}
+    if prop.get("type") != "title":
+        return ""
+    return "".join(
+        str(part.get("plain_text") or (part.get("text") or {}).get("content") or "")
+        for part in prop.get("title") or []
+    )
+
+
 def _property_select(page: dict[str, Any], name: str) -> str:
     properties = page.get("properties") or {}
     prop = properties.get(name) or {}
@@ -811,6 +831,20 @@ def _property_checkbox(page: dict[str, Any], name: str) -> bool:
     properties = page.get("properties") or {}
     prop = properties.get(name) or {}
     return bool(prop.get("checkbox")) if prop.get("type") == "checkbox" else False
+
+
+def _property_date_start(page: dict[str, Any], name: str) -> str:
+    properties = page.get("properties") or {}
+    prop = properties.get(name) or {}
+    value = prop.get("date") if prop.get("type") == "date" else None
+    return str((value or {}).get("start") or "")
+
+
+def _property_number(page: dict[str, Any], name: str) -> float | None:
+    properties = page.get("properties") or {}
+    prop = properties.get(name) or {}
+    value = prop.get("number") if prop.get("type") == "number" else None
+    return value if isinstance(value, (int, float)) else None
 
 
 class NotionSchoolBoard:
@@ -847,6 +881,10 @@ class NotionSchoolBoard:
         )
         return databases.get(MASTER_TASK_TITLE)
 
+    def master_tasks_enabled(self) -> bool:
+        """Return whether the safe migration has created the master database."""
+        return self._master_task_database() is not None
+
     def sync_master_tasks(
         self,
         assignments: Iterable[Any],
@@ -877,6 +915,9 @@ class NotionSchoolBoard:
         for page in self.client.query_database_pages(database_id):
             source_id = _property_rich_text(page, "Source ID")
             page_id = str(page.get("id") or "")
+            source_type = _property_select(page, "Source type")
+            if not source_id and page_id and source_type != "Canvas":
+                source_id = f"notion:{page_id.replace('-', '')}"
             if source_id and page_id and source_id not in existing:
                 existing[source_id] = (
                     page_id,
@@ -953,6 +994,146 @@ class NotionSchoolBoard:
                     "url": str(page.get("url") or ""),
                 }
         return context
+
+    def get_master_work(self) -> WorkSnapshot:
+        """Read non-Canvas work directly from the migrated source of truth."""
+        database_id = self._master_task_database()
+        if not database_id:
+            raise NotionError("master Tasks database does not exist")
+        items: list[NotionWorkItem] = []
+        warnings: list[str] = []
+        for page in self.client.query_database_pages(database_id):
+            if _property_select(page, "Source type") == "Canvas":
+                continue
+            if _property_checkbox(page, "Done"):
+                continue
+            page_id = str(page.get("id") or "").replace("-", "")
+            name = _bounded(_property_title(page, "Task"), 200)
+            if not page_id or not name:
+                warnings.append("Skipped a master Tasks row without a page id or Task title")
+                continue
+            source_id = _property_rich_text(page, "Source ID") or f"notion:{page_id}"
+            area = _property_select(page, "Area") or "Misc"
+            item_type = _property_select(page, "Task type") or _property_rich_text(
+                page, "Kind"
+            )
+            effort = _property_select(page, "Effort") or None
+            if effort not in {*EFFORTS, None}:
+                warnings.append(f"Master Tasks row {page_id}: unknown Effort was ignored")
+                effort = None
+
+            due_start = _property_date_start(page, "Due")
+            touched_start = _property_date_start(page, "Last touched")
+            try:
+                deadline = date.fromisoformat(due_start[:10]) if due_start else None
+            except ValueError:
+                deadline = None
+                warnings.append(f"Master Tasks row {page_id}: invalid Due date was ignored")
+            try:
+                last_touched = (
+                    date.fromisoformat(touched_start[:10]) if touched_start else None
+                )
+            except ValueError:
+                last_touched = None
+                warnings.append(
+                    f"Master Tasks row {page_id}: invalid Last touched date was ignored"
+                )
+            items.append(
+                NotionWorkItem(
+                    key=source_id,
+                    page_id=page_id,
+                    url=str(page.get("url") or ""),
+                    name=name,
+                    area=area,
+                    type=item_type or None,
+                    cadence=_property_select(page, "Cadence") or None,
+                    last_touched=last_touched,
+                    next_step=_bounded(_property_rich_text(page, "Next step"), 1000),
+                    deadline=deadline,
+                    effort=effort,
+                )
+            )
+        return WorkSnapshot(items=items, warnings=warnings)
+
+    def sync_master_focus(
+        self,
+        classification: Any,
+        *,
+        guidance_by_key: dict[str, str] | None = None,
+        focus_keys: list[str] | None = None,
+        focus_reason: str = "",
+        target_date: date,
+    ) -> MasterFocusSyncResult:
+        """Mark only 1–3 master rows for the phone-friendly Today's Focus view."""
+        database_id = self._master_task_database()
+        if not database_id:
+            raise NotionError("master Tasks database does not exist; run migrate-notion --apply")
+        root = self.client.retrieve_page(self.parent_page_id)
+        dashboard_url = str(root.get("url") or f"https://www.notion.so/{self.parent_page_id}")
+        pages = self.client.query_database_pages(database_id)
+        existing: dict[str, tuple[str, dict[str, Any]]] = {}
+        for page in pages:
+            source_id = _property_rich_text(page, "Source ID")
+            page_id = str(page.get("id") or "")
+            if source_id and page_id and source_id not in existing:
+                existing[source_id] = (page_id, page)
+
+        ordered = [*classification.must, *classification.smart, *classification.may]
+        items_by_key = {item.key: item for item in ordered}
+        requested = focus_keys or [item.key for item in ordered[:3]]
+        selected = []
+        selected_keys: set[str] = set()
+        for key in requested:
+            if key in items_by_key and key not in selected_keys and len(selected) < 3:
+                selected.append(items_by_key[key])
+                selected_keys.add(key)
+        if not selected:
+            selected = ordered[:3]
+            selected_keys = {item.key for item in selected}
+
+        result = MasterFocusSyncResult(self.parent_page_id, dashboard_url)
+        guidance = guidance_by_key or {}
+        missing: list[str] = []
+        for rank, item in enumerate(selected, start=1):
+            current = existing.get(item.key)
+            if not current:
+                missing.append(item.key)
+                continue
+            reason = focus_reason if rank == 1 else ""
+            self.client.update_master_task(
+                current[0],
+                {
+                    "Focus date": target_date,
+                    "Focus rank": rank,
+                    "Focus reason": _bounded(reason, 240),
+                    "Priority": item.tier.upper(),
+                    "Next step": _bounded(
+                        guidance.get(item.key)
+                        or item.next_step
+                        or "Open the task and begin.",
+                        1000,
+                    ),
+                },
+            )
+            result.rows_focused += 1
+
+        for source_id, (page_id, page) in existing.items():
+            if source_id in selected_keys:
+                continue
+            had_focus = bool(
+                _property_date_start(page, "Focus date")
+                or _property_number(page, "Focus rank") is not None
+                or _property_rich_text(page, "Focus reason")
+            )
+            if not had_focus:
+                continue
+            self.client.update_master_task(
+                page_id,
+                {"Focus date": None, "Focus rank": None, "Focus reason": ""},
+            )
+            result.rows_cleared += 1
+        result.missing_source_ids = tuple(missing)
+        return result
 
     def sync_canvas_assignments(
         self,

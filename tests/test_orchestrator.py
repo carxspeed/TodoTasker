@@ -68,6 +68,9 @@ class NotionDelivery:
     def get_assignment_context(self):
         return self.context
 
+    def master_tasks_enabled(self):
+        return False
+
     def get_daily_plan_context(self):
         return self.plan_context
 
@@ -77,6 +80,46 @@ class NotionDelivery:
 
     def sync_daily_plan(self, *args, **kwargs):
         self.plan_calls += 1
+        return SchoolSyncResult("page", "https://notion.test/page")
+
+
+class MasterNotionDelivery(NotionDelivery):
+    def __init__(self):
+        super().__init__()
+        self.master_context = {}
+        self.master_items = []
+        self.master_sync_calls = 0
+        self.master_focus_calls = 0
+
+    def master_tasks_enabled(self):
+        return True
+
+    def get_master_task_context(self):
+        return self.master_context
+
+    def get_master_work(self):
+        from daily_brief.notion import WorkSnapshot
+
+        return WorkSnapshot(items=self.master_items)
+
+    def get_assignment_context(self):
+        raise AssertionError("legacy School tables must not be read in master mode")
+
+    def get_daily_plan_context(self):
+        raise AssertionError("legacy Today's Focus must not be read in master mode")
+
+    def sync_canvas_assignments(self, *args, **kwargs):
+        raise AssertionError("legacy class tables must not be synced in master mode")
+
+    def sync_daily_plan(self, *args, **kwargs):
+        raise AssertionError("duplicate focus rows must not be created in master mode")
+
+    def sync_master_tasks(self, *args, **kwargs):
+        self.master_sync_calls += 1
+        return SchoolSyncResult("page", "https://notion.test/page")
+
+    def sync_master_focus(self, *args, **kwargs):
+        self.master_focus_calls += 1
         return SchoolSyncResult("page", "https://notion.test/page")
 
 
@@ -281,6 +324,54 @@ def test_school_notes_inform_guidance_and_done_rows_are_excluded(tmp_path: Path)
     assert selected[noted.key].user_notes == "Finished the first half."
     assert completed.key not in selected
     assert all(item.key != completed.key for item in artifact.sources.canvas.assignments)
+
+
+def test_master_layout_is_the_source_of_truth_and_routes_delivery_without_duplicates(
+    tmp_path: Path,
+) -> None:
+    notion = MasterNotionDelivery()
+    provider = Provider()
+    assignment = provider.canvas.assignments[0]
+    notion.master_context = {
+        assignment.key: {"done": False, "notes": "Half complete."}
+    }
+    from daily_brief.models import NotionWorkItem
+
+    notion.master_items = [
+        NotionWorkItem(
+            key="notion:master-work",
+            page_id="master-work",
+            url="https://notion.test/master-work",
+            name="Master-only work item",
+            area="Work",
+            next_step="Draft the opening paragraph.",
+            effort="S",
+        )
+    ]
+    provider.fetch_notion = lambda: (_ for _ in ()).throw(
+        AssertionError("legacy Notion databases must not be read in master mode")
+    )
+    telegram = Telegram()
+    orchestrator = make_orchestrator(tmp_path, Guidance(), notion, telegram)
+
+    artifact, _ = orchestrator.prepare(
+        provider,
+        target_date=TARGET,
+        as_of=datetime(2026, 9, 2, 6, 30, tzinfo=TZ),
+    )
+    assert artifact.sources.canvas.assignments[0].user_notes == "Half complete."
+    assert [item.name for item in artifact.sources.notion] == ["Master-only work item"]
+
+    _, status, _ = orchestrator.deliver(
+        provider,
+        target_date=TARGET,
+        as_of=datetime(2026, 9, 2, 7, 0, tzinfo=TZ),
+    )
+    assert status == "sent"
+    assert notion.master_sync_calls == 1
+    assert notion.master_focus_calls == 1
+    assert notion.calls == 0
+    assert notion.plan_calls == 0
 
 
 def test_delivery_reuses_prepared_guidance_and_same_payload_skips(tmp_path: Path) -> None:

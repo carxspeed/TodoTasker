@@ -192,6 +192,14 @@ class DailyBriefOrchestrator:
         canvas = None
         notion = None
         calendar = None
+        master_layout = False
+        if self.notion_delivery is not None:
+            try:
+                master_layout = self.notion_delivery.master_tasks_enabled()
+            except Exception:
+                warnings.append(
+                    "Master Tasks availability could not be checked; legacy Notion status was used"
+                )
         try:
             canvas = provider.fetch_canvas(target_date)
             statuses["canvas"] = "live"
@@ -259,20 +267,47 @@ class DailyBriefOrchestrator:
             else:
                 statuses["canvas"] = "unavailable"
                 warnings.append("Canvas is unavailable; assignments were not treated as an empty success")
-        try:
-            notion = provider.fetch_notion()
-            statuses["notion"] = "live"
-            if write_cache:
-                self.cache.save("notion", notion)
-        except Exception:
-            cached = self.cache.load("notion", NotionSnapshot)
-            if cached:
-                notion, cached_at = cached
-                statuses["notion"] = "cached"
-                warnings.append(f"Notion is cached from {cached_at.isoformat()}")
-            else:
-                statuses["notion"] = "unavailable"
-                warnings.append("Notion is unavailable; Work was not treated as an empty success")
+        if master_layout and self.notion_delivery is not None:
+            try:
+                master_work = self.notion_delivery.get_master_work()
+                notion = NotionSnapshot(
+                    fetched_at=utc_now(),
+                    items=master_work.items,
+                    warnings=master_work.warnings,
+                )
+                statuses["notion"] = "live"
+                if write_cache:
+                    self.cache.save("notion", notion)
+            except Exception:
+                cached = self.cache.load("notion", NotionSnapshot)
+                if cached:
+                    notion, cached_at = cached
+                    statuses["notion"] = "cached"
+                    warnings.append(
+                        f"Master Tasks is cached from {cached_at.isoformat()}"
+                    )
+                else:
+                    statuses["notion"] = "unavailable"
+                    warnings.append(
+                        "Master Tasks is unavailable; personal work was not treated as an empty success"
+                    )
+        else:
+            try:
+                notion = provider.fetch_notion()
+                statuses["notion"] = "live"
+                if write_cache:
+                    self.cache.save("notion", notion)
+            except Exception:
+                cached = self.cache.load("notion", NotionSnapshot)
+                if cached:
+                    notion, cached_at = cached
+                    statuses["notion"] = "cached"
+                    warnings.append(f"Notion is cached from {cached_at.isoformat()}")
+                else:
+                    statuses["notion"] = "unavailable"
+                    warnings.append(
+                        "Notion is unavailable; Work was not treated as an empty success"
+                    )
         try:
             calendar = provider.fetch_calendar(target_date, canvas.canvas_events if canvas else [])
             statuses["calendar"] = "live"
@@ -293,7 +328,40 @@ class DailyBriefOrchestrator:
             warnings.extend(canvas.data_warnings)
         if notion:
             warnings.extend(notion.warnings)
-        if canvas is not None and self.notion_delivery is not None:
+        if master_layout and self.notion_delivery is not None:
+            try:
+                master_context = self.notion_delivery.get_master_task_context()
+                if canvas is not None:
+                    canvas = canvas.model_copy(
+                        update={
+                            "assignments": [
+                                item.model_copy(
+                                    update={
+                                        "user_notes": master_context.get(item.key, {}).get(
+                                            "notes", ""
+                                        )
+                                    }
+                                )
+                                for item in canvas.assignments
+                                if not master_context.get(item.key, {}).get("done", False)
+                            ]
+                        }
+                    )
+                if notion is not None:
+                    notion = notion.model_copy(
+                        update={
+                            "items": [
+                                item
+                                for item in notion.items
+                                if not master_context.get(item.key, {}).get("done", False)
+                            ]
+                        }
+                    )
+            except Exception:
+                warnings.append(
+                    "Master Tasks notes/status could not be read; source tasks were unchanged"
+                )
+        elif canvas is not None and self.notion_delivery is not None:
             try:
                 school_context = self.notion_delivery.get_assignment_context()
                 assignments = []
@@ -311,7 +379,7 @@ class DailyBriefOrchestrator:
                 warnings.append(
                     "School notes/status could not be read; Canvas assignments used their source state"
                 )
-        if self.notion_delivery is not None:
+        if self.notion_delivery is not None and not master_layout:
             try:
                 plan_context = self.notion_delivery.get_daily_plan_context()
                 if canvas is not None:
@@ -594,20 +662,49 @@ class DailyBriefOrchestrator:
                             "Next step": "Confirm whether this Canvas item is still unfinished.",
                         },
                     )
-                if bundle.canvas is not None:
-                    notion_result = self.notion_delivery.sync_canvas_assignments(
-                        bundle.canvas.assignments,
+                master_layout = self.notion_delivery.master_tasks_enabled()
+                if master_layout:
+                    master_result = self.notion_delivery.sync_master_tasks(
+                        bundle.canvas.assignments if bundle.canvas is not None else [],
+                        bundle.notion.items if bundle.notion is not None else [],
                         details_by_key=details_by_key,
                         excluded_course_ids=self.settings.canvas_excluded_course_ids,
                     )
+                    plan_result = self.notion_delivery.sync_master_focus(
+                        classification,
+                        guidance_by_key=guidance_by_key,
+                        focus_keys=(
+                            guidance.focus.today_keys
+                            if guidance and guidance.focus
+                            else None
+                        ),
+                        focus_reason=(
+                            guidance.focus.reason
+                            if guidance and guidance.focus
+                            else ""
+                        ),
+                        target_date=target_date,
+                    )
+                    notion_result = master_result
                 else:
-                    notion_result = None
-                plan_result = self.notion_delivery.sync_daily_plan(
-                    classification,
-                    guidance_by_key=guidance_by_key,
-                    focus_keys=(guidance.focus.today_keys if guidance and guidance.focus else None),
-                    target_date=target_date,
-                )
+                    if bundle.canvas is not None:
+                        notion_result = self.notion_delivery.sync_canvas_assignments(
+                            bundle.canvas.assignments,
+                            details_by_key=details_by_key,
+                            excluded_course_ids=self.settings.canvas_excluded_course_ids,
+                        )
+                    else:
+                        notion_result = None
+                    plan_result = self.notion_delivery.sync_daily_plan(
+                        classification,
+                        guidance_by_key=guidance_by_key,
+                        focus_keys=(
+                            guidance.focus.today_keys
+                            if guidance and guidance.focus
+                            else None
+                        ),
+                        target_date=target_date,
+                    )
                 delivery.notion_page_id = plan_result.page_id
                 delivery.notion_url = plan_result.url
                 notion_url = plan_result.url
