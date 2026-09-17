@@ -171,6 +171,17 @@ class FakeSchoolClient:
         self.updated_rows.append((page_id, fields))
         return {"id": page_id}
 
+    def create_master_task(self, database_id, fields):
+        self.created_rows.append((database_id, fields))
+        return {
+            "id": f"master-{len(self.created_rows)}",
+            "url": f"https://notion.test/master-{len(self.created_rows)}",
+        }
+
+    def update_master_task(self, page_id, fields):
+        self.updated_rows.append((page_id, fields))
+        return {"id": page_id, "url": f"https://notion.test/{page_id}"}
+
     def archive_page(self, page_id):
         self.archived_rows.append(page_id)
         return {"id": page_id, "archived": True}
@@ -191,6 +202,65 @@ def test_school_board_creates_one_table_per_class_and_excludes_course() -> None:
     assert {title for title, _ in fake.created_databases} == {item.course for item in included}
     assert all(options["is_inline"] is True for _, options in fake.created_databases)
     assert all(row[1]["Canvas ID"] != assignments[-1].key for row in fake.created_rows)
+
+
+def test_master_sync_creates_one_database_and_preserves_user_fields_on_updates() -> None:
+    assignment = load_fixture("fixtures/sample_todo.json").assignments[0]
+    notion_item = NotionWorkItem(
+        key="notion:work",
+        page_id="work",
+        url="https://notion.test/work",
+        name="Prepare weekly update",
+        area="Work",
+        type="Task",
+        next_step="Draft three bullets.",
+    )
+    fake = FakeSchoolClient()
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    result = board.sync_master_tasks(
+        [assignment],
+        [notion_item],
+        details_by_key={assignment.key: {"Priority": "MUST", "Effort": "M"}},
+    )
+
+    assert result.database_created is True
+    assert result.rows_created == 2
+    assert fake.created_databases[0][0] == "Tasks"
+    created_fields = [fields for _, fields in fake.created_rows]
+    assert {fields["Source ID"] for fields in created_fields} == {
+        assignment.key,
+        notion_item.key,
+    }
+    assert all(fields["Done"] is False for fields in created_fields)
+    assert all(fields["Notes / progress"] == "" for fields in created_fields)
+
+
+def test_master_context_reads_done_notes_and_page_url() -> None:
+    fake = FakeSchoolClient()
+    fake.children = [
+        {"type": "child_database", "id": "master", "child_database": {"title": "Tasks"}}
+    ]
+    fake.query_database_pages = lambda _database_id: [
+        {
+            "id": "row",
+            "url": "https://notion.test/row",
+            "properties": {
+                "Source ID": text_prop("rich_text", "assignment:1"),
+                "Done": {"type": "checkbox", "checkbox": True},
+                "Notes / progress": text_prop("rich_text", "Submitted in person."),
+            },
+        }
+    ]
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    assert board.get_master_task_context() == {
+        "assignment:1": {
+            "done": True,
+            "notes": "Submitted in person.",
+            "url": "https://notion.test/row",
+        }
+    }
 
 
 def test_school_context_reads_notes_and_status_without_canvas_bookkeeping() -> None:

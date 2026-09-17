@@ -60,6 +60,18 @@ class DailyPlanSyncResult:
     rows_archived: int = 0
 
 
+@dataclass
+class MasterTaskSyncResult:
+    database_id: str
+    page_id: str
+    url: str
+    database_created: bool = False
+    rows_created: int = 0
+    rows_updated: int = 0
+    rows_unchanged: int = 0
+    task_urls: dict[str, str] = field(default_factory=dict)
+
+
 def title_property(value: str) -> dict[str, Any]:
     return {"title": [{"text": {"content": value}}]}
 
@@ -238,6 +250,60 @@ def school_assignment_fields(
     ).hexdigest()
     fields["Sync hash"] = fingerprint
     return fields
+
+
+def canvas_master_task_fields(
+    assignment: Any, details: dict[str, str] | None = None
+) -> dict[str, Any]:
+    school = school_assignment_fields(assignment, details)
+    source_fields = {
+        "Task": school["Name"],
+        "Area": "School",
+        "Course": _bounded(assignment.course, 200),
+        "Source type": "Canvas",
+        "Source ID": assignment.key,
+        "Source URL": assignment.url or None,
+        "Due": school["Due"],
+        "Priority": school["Priority"],
+        "Effort": school["Effort"],
+        "Kind": assignment.kind,
+        "Next step": school["Next step"],
+        "Instructions": school["Instructions"],
+        "Needs verification": school["Status"] == "Verify",
+    }
+    source_fields["Sync hash"] = hashlib.sha256(
+        json.dumps(source_fields, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return source_fields
+
+
+def notion_master_task_fields(
+    item: NotionWorkItem, details: dict[str, str] | None = None
+) -> dict[str, Any]:
+    details = details or {}
+    area = item.area if item.area in MASTER_AREAS else "Misc"
+    source_fields = {
+        "Task": _bounded(item.name, 500),
+        "Area": area,
+        "Course": "",
+        "Source type": "Notion",
+        "Source ID": item.key,
+        "Source URL": item.url or None,
+        "Due": item.deadline,
+        "Priority": details.get("Priority") or "Later",
+        "Effort": details.get("Effort") or item.effort,
+        "Kind": item.type or "Task",
+        "Next step": _bounded(details.get("Next step") or item.next_step, 1000),
+        "Instructions": "",
+        "Needs verification": False,
+        "Cadence": item.cadence,
+        "Last touched": item.last_touched,
+        "Task type": item.type,
+    }
+    source_fields["Sync hash"] = hashlib.sha256(
+        json.dumps(source_fields, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return source_fields
 
 
 def school_properties(fields: dict[str, Any]) -> dict[str, Any]:
@@ -640,6 +706,27 @@ class NotionClient:
             idempotent=False,
         )
 
+    def create_master_task(
+        self, database_id: str, fields: dict[str, Any]
+    ) -> dict[str, Any]:
+        return self._json(
+            "POST",
+            "/pages",
+            payload={
+                "parent": {"type": "database_id", "database_id": database_id},
+                "properties": master_task_properties(fields),
+            },
+            idempotent=False,
+        )
+
+    def update_master_task(self, page_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+        return self._json(
+            "PATCH",
+            f"/pages/{page_id.replace('-', '')}",
+            payload={"properties": master_task_properties(fields)},
+            idempotent=False,
+        )
+
     def update_daily_plan_item(
         self, page_id: str, fields: dict[str, Any]
     ) -> dict[str, Any]:
@@ -688,6 +775,12 @@ def _property_select(page: dict[str, Any], name: str) -> str:
     return str((selected or {}).get("name") or "")
 
 
+def _property_checkbox(page: dict[str, Any], name: str) -> bool:
+    properties = page.get("properties") or {}
+    prop = properties.get(name) or {}
+    return bool(prop.get("checkbox")) if prop.get("type") == "checkbox" else False
+
+
 class NotionSchoolBoard:
     """Synchronize Canvas assignments into one database per class on the School page."""
 
@@ -715,6 +808,102 @@ class NotionSchoolBoard:
             if title and title not in databases:
                 databases[title] = str(child["id"])
         return databases
+
+    def _master_task_database(self) -> str | None:
+        databases = self._child_databases(
+            self.client.list_block_children(self.parent_page_id)
+        )
+        return databases.get(MASTER_TASK_TITLE)
+
+    def sync_master_tasks(
+        self,
+        assignments: Iterable[Any],
+        notion_items: Iterable[NotionWorkItem],
+        *,
+        details_by_key: dict[str, dict[str, str]] | None = None,
+        excluded_course_ids: Iterable[int] = (),
+    ) -> MasterTaskSyncResult:
+        """Upsert every active source row without overwriting Done or Notes."""
+        root = self.client.retrieve_page(self.parent_page_id)
+        dashboard_url = str(root.get("url") or f"https://www.notion.so/{self.parent_page_id}")
+        database_id = self._master_task_database()
+        created_database = False
+        if not database_id:
+            database = self.client.create_database(
+                MASTER_TASK_TITLE,
+                parent_page_id=self.parent_page_id,
+                properties=master_task_schema(),
+                is_inline=False,
+            )
+            database_id = str(database["id"])
+            created_database = True
+        else:
+            self.client.ensure_database_properties(database_id, master_task_schema())
+
+        existing: dict[str, tuple[str, str, str]] = {}
+        for page in self.client.query_database_pages(database_id):
+            source_id = _property_rich_text(page, "Source ID")
+            page_id = str(page.get("id") or "")
+            if source_id and page_id and source_id not in existing:
+                existing[source_id] = (
+                    page_id,
+                    _property_rich_text(page, "Sync hash"),
+                    str(page.get("url") or ""),
+                )
+
+        details = details_by_key or {}
+        excluded = set(excluded_course_ids)
+        rows: list[tuple[str, dict[str, Any]]] = []
+        rows.extend(
+            (item.key, canvas_master_task_fields(item, details.get(item.key)))
+            for item in assignments
+            if item.course_id not in excluded
+        )
+        rows.extend(
+            (item.key, notion_master_task_fields(item, details.get(item.key)))
+            for item in notion_items
+        )
+        result = MasterTaskSyncResult(
+            database_id=database_id,
+            page_id=self.parent_page_id,
+            url=dashboard_url,
+            database_created=created_database,
+        )
+        for source_id, fields in rows:
+            current = existing.get(source_id)
+            if current and current[1] == fields["Sync hash"]:
+                result.rows_unchanged += 1
+                result.task_urls[source_id] = current[2]
+                continue
+            if current:
+                response = self.client.update_master_task(current[0], fields)
+                result.rows_updated += 1
+                result.task_urls[source_id] = str(response.get("url") or current[2])
+            else:
+                response = self.client.create_master_task(
+                    database_id,
+                    {**fields, "Done": False, "Notes / progress": ""},
+                )
+                result.rows_created += 1
+                result.task_urls[source_id] = str(response.get("url") or "")
+        return result
+
+    def get_master_task_context(self) -> dict[str, dict[str, Any]]:
+        database_id = self._master_task_database()
+        if not database_id:
+            return {}
+        context: dict[str, dict[str, Any]] = {}
+        for page in self.client.query_database_pages(database_id):
+            source_id = _property_rich_text(page, "Source ID")
+            if source_id:
+                context[source_id] = {
+                    "done": _property_checkbox(page, "Done"),
+                    "notes": _bounded(
+                        _property_rich_text(page, "Notes / progress"), 1000
+                    ),
+                    "url": str(page.get("url") or ""),
+                }
+        return context
 
     def sync_canvas_assignments(
         self,
