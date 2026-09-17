@@ -322,15 +322,25 @@ def generate_guidance(
     try:
         request = build_guidance_request(selected, free_windows, workload_totals, target_date)
         client = session or requests.Session()
-        if provider == "local":
-            text = _local_call(client, request, base_url=ollama_base_url, model=model)
-        else:
-            text = _anthropic_call(
-                client,
-                request,
-                model=model,
-                api_key=anthropic_api_key,
-            )
-        return validate_guidance_text(text, request)
-    except (LLMUnavailable, KeyError, IndexError, TypeError, ValueError, ValidationError, jsonschema.ValidationError):
+    except (ValueError, ValidationError, jsonschema.ValidationError):
         return None
+
+    attempts = 2 if provider == "anthropic" else 1
+    for attempt in range(attempts):
+        try:
+            if provider == "local":
+                text = _local_call(client, request, base_url=ollama_base_url, model=model)
+            else:
+                text = _anthropic_call(
+                    client,
+                    request,
+                    model=model,
+                    api_key=anthropic_api_key,
+                )
+            return validate_guidance_text(text, request)
+        except LLMUnavailable:
+            return None
+        except (KeyError, IndexError, TypeError, ValueError, ValidationError, jsonschema.ValidationError):
+            if attempt + 1 == attempts:
+                return None
+    return None

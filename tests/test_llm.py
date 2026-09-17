@@ -248,6 +248,29 @@ def test_anthropic_generation_uses_current_api_parameters() -> None:
     assert "temperature" not in session.payload
 
 
+def test_anthropic_generation_retries_one_invalid_structured_response() -> None:
+    class RetrySession(Session):
+        def post(self, *args, **kwargs):
+            self.post_calls += 1
+            text = "not json" if self.post_calls == 1 else response_for(["assignment:1"])
+            return Response({"content": [{"type": "text", "text": text}]})
+
+    session = RetrySession("")
+    result = generate_guidance(
+        [task(1)],
+        [],
+        TOTALS,
+        date(2026, 9, 2),
+        provider="anthropic",
+        model="claude-sonnet-5",
+        anthropic_api_key="test-key",
+        session=session,
+    )
+
+    assert result is not None
+    assert session.post_calls == 2
+
+
 def test_zero_guidance_items_is_valid_and_still_one_call() -> None:
     session = Session('{"overview":"","task_guidance":[]}')
     result = generate_guidance([], [], {**TOTALS, "selected_count": 0}, date(2026, 9, 2), session=session)
