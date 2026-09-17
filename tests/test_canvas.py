@@ -762,6 +762,25 @@ def test_planner_recognizes_common_assessment_labels() -> None:
     ]
 
 
+def test_planner_keeps_each_assessment_with_its_own_date_and_text() -> None:
+    body = """
+    <p>9/14 S Timed Write 9/15 & 9/16 Work Day 9/17 R Work Day
+    9/18 F Multiple Choice Test</p>
+    """
+    result = window_planner_html(
+        body,
+        course_id=1,
+        course="AP Lit",
+        title="Week at a Glance",
+        url="https://canvas.test/planner",
+        target_date=date(2026, 9, 17),
+        title_matched=True,
+    )
+    assert [(event.date, event.title) for event in result.events] == [
+        (date(2026, 9, 18), "9/18 F Multiple Choice Test"),
+    ]
+
+
 def test_generic_undated_front_page_is_discarded() -> None:
     result = window_planner_html(
         "<p>Welcome to class. Read the syllabus.</p>",

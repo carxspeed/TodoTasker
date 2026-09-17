@@ -148,7 +148,7 @@ def _assessment_label(title: str) -> str:
     """Remove the schedule prefix without guessing details that Canvas did not provide."""
     label = " ".join(title.split())
     label = re.sub(
-        r"^\d{1,2}/\d{1,2}(?:/\d{2,4})?\s+(?:(?:M|T|W|Th|F|Sa|Su|Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+)?",
+        r"^\d{1,2}/\d{1,2}(?:/\d{2,4})?\s+(?:(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Mon|Tue|Wed|Thu|Fri|Sat|Sun|Th|Sa|Su|M|T|W|R|F)\s+)?",
         "",
         label,
         flags=re.I,

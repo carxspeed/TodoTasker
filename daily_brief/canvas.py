@@ -46,7 +46,7 @@ from .timeutils import parse_external_timestamp, utc_now
 TASK_TYPES = {"assignment", "quiz", "discussion_topic", "sub_assignment"}
 NEXT_LINK_RE = re.compile(r'<([^>]+)>\s*;\s*rel="?next"?', re.IGNORECASE)
 DATE_RE = re.compile(r"(?<![\d/])(?P<m>\d{1,2})/(?P<d>\d{1,2})(?![\d/])")
-WEEKDAY = r"(?:M|T|W|Th|F|Sa|Su|Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)"
+WEEKDAY = r"(?:M|T|W|R|Th|F|Sa|Su|Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)"
 WEEKDAY_RE = re.compile(rf"\b{WEEKDAY}\b", re.IGNORECASE)
 REJECT_DATE_CONTEXT = re.compile(r"score|points|pts|out of|fraction|read|chapter|problem", re.I)
 PLANNER_TITLE_RE = re.compile(r"planner|week at a glance|agenda|schedule|calendar", re.I)
@@ -1037,6 +1037,47 @@ class PlannerParseResult:
     observation: PlannerObservation
 
 
+def _assessment_events_from_text(
+    text: str,
+    *,
+    course: str,
+    url: str,
+    dates: list[date],
+    target_date: date,
+) -> list[PlannerEvent]:
+    """Keep each dated planner entry separate instead of attaching a whole week."""
+    matches = list(DATE_RE.finditer(text))
+    events: list[PlannerEvent] = []
+    allowed = set(dates)
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        segment = re.sub(r"\s+", " ", text[match.start() : end]).strip(" -")
+        if not segment or not ASSESSMENT_RE.search(segment):
+            continue
+        segment_dates = _eligible_dates(
+            segment, target=target_date, leading=True, header_date=False
+        )
+        for value in segment_dates:
+            if value in allowed:
+                events.append(
+                    PlannerEvent(
+                        course=course,
+                        title=segment[:200],
+                        date=value,
+                        text=segment,
+                        url=url,
+                    )
+                )
+    # A table row may contain its date only in a separate cell.  The row text is
+    # still the best compact label in that case.
+    if not events and ASSESSMENT_RE.search(text):
+        for value in dates:
+            events.append(
+                PlannerEvent(course=course, title=text[:200], date=value, text=text, url=url)
+            )
+    return events
+
+
 def window_planner_html(
     body: str,
     *,
@@ -1092,11 +1133,16 @@ def window_planner_html(
     event_rows: list[PlannerEvent] = []
     for text, dates in kept:
         all_dates.extend(value for value in dates if value not in all_dates)
-        if ASSESSMENT_RE.search(text):
-            for value in dates:
-                event_rows.append(
-                    PlannerEvent(course=course, title=text[:200], date=value, text=text, url=url)
-                )
+        window_dates = [value for value in dates if start <= value <= end]
+        event_rows.extend(
+            _assessment_events_from_text(
+                text,
+                course=course,
+                url=url,
+                dates=window_dates,
+                target_date=target_date,
+            )
+        )
     if kept:
         joined = "\n".join(text for text, _ in kept)
         if len(joined) > 1200:

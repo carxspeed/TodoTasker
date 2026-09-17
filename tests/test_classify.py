@@ -105,6 +105,19 @@ def test_tomorrows_weekly_quiz_becomes_a_study_task_today() -> None:
     assert study.url == event.url
 
 
+def test_schedule_r_for_thursday_is_not_part_of_the_assessment_name() -> None:
+    event = PlannerEvent(
+        course="Calculus",
+        title="9/3 R Quiz 2",
+        date=date(2026, 9, 3),
+        text="9/3 R Quiz 2",
+        url="https://canvas.test/week-at-a-glance",
+    )
+    result = run(planner_events=[event])
+    study = next(item for item in result.must if item.kind == "planner_assessment")
+    assert study.name == "Study for Quiz 2"
+
+
 def test_only_explicit_large_override_gets_48_hour_must_rule() -> None:
     result = run(
         [canvas_item("assignment:1", due_hours=47, points=50), canvas_item("assignment:2", due_hours=47)],
