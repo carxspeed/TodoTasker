@@ -288,6 +288,7 @@ def _anthropic_call(
             json={
                 "model": model,
                 "max_tokens": min(1200, max(256, 160 + 90 * len(request.keys))),
+                "thinking": {"type": "disabled"},
                 "system": request.system,
                 "messages": [
                     {

@@ -246,6 +246,7 @@ def test_anthropic_generation_uses_current_api_parameters() -> None:
     assert result is not None
     assert session.post_calls == 1
     assert "temperature" not in session.payload
+    assert session.payload["thinking"] == {"type": "disabled"}
 
 
 def test_anthropic_generation_retries_one_invalid_structured_response() -> None:
