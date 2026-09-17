@@ -24,6 +24,7 @@ from daily_brief.notion import (
     school_properties,
     compact_instruction_summary,
     select_property,
+    summarize_master_migration,
     title_property,
     work_properties,
 )
@@ -234,6 +235,52 @@ def test_master_sync_creates_one_database_and_preserves_user_fields_on_updates()
     }
     assert all(fields["Done"] is False for fields in created_fields)
     assert all(fields["Notes / progress"] == "" for fields in created_fields)
+
+
+def test_master_migration_preserves_legacy_done_and_notes_on_create() -> None:
+    assignment = load_fixture("fixtures/sample_todo.json").assignments[0]
+    fake = FakeSchoolClient()
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    board.sync_master_tasks(
+        [assignment],
+        [],
+        user_context_by_key={
+            assignment.key: {
+                "status": "Done",
+                "notes": "Submitted to the teacher in person.",
+            }
+        },
+    )
+
+    fields = fake.created_rows[0][1]
+    assert fields["Done"] is True
+    assert fields["Notes / progress"] == "Submitted to the teacher in person."
+
+
+def test_master_migration_summary_reports_duplicates_and_exclusions() -> None:
+    assignments = load_fixture("fixtures/sample_todo.json").assignments
+    included = assignments[0]
+    excluded = included.model_copy(
+        update={"key": "assignment:excluded", "course_id": 999}
+    )
+    notion_item = NotionWorkItem(
+        key=included.key,
+        page_id="duplicate",
+        url="https://notion.test/duplicate",
+        name="Duplicate source",
+    )
+
+    summary = summarize_master_migration(
+        [included, excluded],
+        [notion_item],
+        excluded_course_ids={excluded.course_id},
+    )
+
+    assert summary.canvas_rows == 1
+    assert summary.notion_rows == 1
+    assert summary.unique_rows == 1
+    assert summary.duplicate_source_ids == (included.key,)
 
 
 def test_master_context_reads_done_notes_and_page_url() -> None:

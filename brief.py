@@ -10,7 +10,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from daily_brief.config import ConfigurationError, load_settings
-from daily_brief.notion import NotionSchoolBoard
+from daily_brief.notion import NotionSchoolBoard, summarize_master_migration
 from daily_brief.orchestrator import DailyBriefOrchestrator, LiveSourceProvider
 from daily_brief.runtime import DeferredHealthyLock, HeartbeatLock
 from daily_brief.telegram import TelegramClient
@@ -33,7 +33,73 @@ def parse_args() -> argparse.Namespace:
         command.add_argument("--dry-run", action="store_true")
     watchdog = sub.add_parser("watchdog")
     watchdog.add_argument("--target-date", type=date.fromisoformat)
+    migration = sub.add_parser(
+        "migrate-notion",
+        help="Preview or apply the safe migration into the unified Tasks database",
+    )
+    migration.add_argument("--target-date", type=date.fromisoformat)
+    migration.add_argument("--profile", type=Path)
+    mode = migration.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--apply",
+        action="store_true",
+        help="Create/update master Tasks rows; legacy tables remain unchanged",
+    )
+    mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Only report the migration plan (the default)",
+    )
     return parser.parse_args()
+
+
+def _run_notion_migration(
+    settings,
+    notion: NotionSchoolBoard | None,
+    *,
+    target: date,
+    profile: Path | None,
+    apply: bool,
+) -> None:
+    if notion is None:
+        raise ConfigurationError(
+            "Notion parent and School pages must be configured before migration"
+        )
+    provider = LiveSourceProvider(settings, profile=profile)
+    canvas = provider.fetch_canvas(target)
+    notion_snapshot = provider.fetch_notion()
+    summary = summarize_master_migration(
+        canvas.assignments,
+        notion_snapshot.items,
+        excluded_course_ids=settings.canvas_excluded_course_ids,
+    )
+    duplicate_text = ",".join(summary.duplicate_source_ids) or "none"
+    print(f"mode={'apply' if apply else 'dry-run'}")
+    print(f"canvas_rows={summary.canvas_rows}")
+    print(f"notion_rows={summary.notion_rows}")
+    print(f"unique_rows={summary.unique_rows}")
+    print(f"duplicates={duplicate_text}")
+    print("legacy_databases_unchanged=true")
+    if summary.duplicate_source_ids:
+        raise RuntimeError(
+            "migration stopped because duplicate Source IDs would make the copy ambiguous"
+        )
+    if not apply:
+        print("next=rerun with --apply after reviewing these counts")
+        return
+
+    legacy_context = notion.get_assignment_context()
+    result = notion.sync_master_tasks(
+        canvas.assignments,
+        notion_snapshot.items,
+        user_context_by_key=legacy_context,
+        excluded_course_ids=settings.canvas_excluded_course_ids,
+    )
+    print(f"master_database_id={result.database_id}")
+    print(f"database_created={str(result.database_created).lower()}")
+    print(f"rows_created={result.rows_created}")
+    print(f"rows_updated={result.rows_updated}")
+    print(f"rows_unchanged={result.rows_unchanged}")
 
 
 def main() -> int:
@@ -55,6 +121,9 @@ def main() -> int:
             if not explicit and not _in_window(now.time(), time(5, 30), time(12, 0)):
                 print("skipped_stale")
                 return 0
+            target = explicit or now.date()
+            as_of = now
+        elif args.command == "migrate-notion":
             target = explicit or now.date()
             as_of = now
         else:
@@ -80,10 +149,22 @@ def main() -> int:
         orchestrator = DailyBriefOrchestrator(
             settings, notion_delivery=notion, telegram=telegram
         )
-        dry_run = getattr(args, "dry_run", False)
+        dry_run = (
+            not args.apply
+            if args.command == "migrate-notion"
+            else getattr(args, "dry_run", False)
+        )
         lock = nullcontext() if dry_run else HeartbeatLock()
         with lock:
-            if args.command == "prepare":
+            if args.command == "migrate-notion":
+                _run_notion_migration(
+                    settings,
+                    notion,
+                    target=target,
+                    profile=args.profile,
+                    apply=args.apply,
+                )
+            elif args.command == "prepare":
                 provider = LiveSourceProvider(
                     settings, fixture=args.fixture, profile=args.profile
                 )

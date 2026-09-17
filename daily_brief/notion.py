@@ -72,6 +72,38 @@ class MasterTaskSyncResult:
     task_urls: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class MasterMigrationSummary:
+    canvas_rows: int
+    notion_rows: int
+    unique_rows: int
+    duplicate_source_ids: tuple[str, ...]
+
+
+def summarize_master_migration(
+    assignments: Iterable[Any],
+    notion_items: Iterable[NotionWorkItem],
+    *,
+    excluded_course_ids: Iterable[int] = (),
+) -> MasterMigrationSummary:
+    excluded = set(excluded_course_ids)
+    canvas_keys = [item.key for item in assignments if item.course_id not in excluded]
+    notion_keys = [item.key for item in notion_items]
+    all_keys = [*canvas_keys, *notion_keys]
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for key in all_keys:
+        if key in seen:
+            duplicates.add(key)
+        seen.add(key)
+    return MasterMigrationSummary(
+        canvas_rows=len(canvas_keys),
+        notion_rows=len(notion_keys),
+        unique_rows=len(seen),
+        duplicate_source_ids=tuple(sorted(duplicates)),
+    )
+
+
 def title_property(value: str) -> dict[str, Any]:
     return {"title": [{"text": {"content": value}}]}
 
@@ -821,6 +853,7 @@ class NotionSchoolBoard:
         notion_items: Iterable[NotionWorkItem],
         *,
         details_by_key: dict[str, dict[str, str]] | None = None,
+        user_context_by_key: dict[str, dict[str, Any]] | None = None,
         excluded_course_ids: Iterable[int] = (),
     ) -> MasterTaskSyncResult:
         """Upsert every active source row without overwriting Done or Notes."""
@@ -852,15 +885,27 @@ class NotionSchoolBoard:
                 )
 
         details = details_by_key or {}
+        user_context = user_context_by_key or {}
         excluded = set(excluded_course_ids)
-        rows: list[tuple[str, dict[str, Any]]] = []
+        rows: list[tuple[str, dict[str, Any], bool, str]] = []
         rows.extend(
-            (item.key, canvas_master_task_fields(item, details.get(item.key)))
+            (
+                item.key,
+                canvas_master_task_fields(item, details.get(item.key)),
+                user_context.get(item.key, {}).get("status") == "Done",
+                _bounded(
+                    str(
+                        user_context.get(item.key, {}).get("notes")
+                        or getattr(item, "user_notes", "")
+                    ),
+                    1000,
+                ),
+            )
             for item in assignments
             if item.course_id not in excluded
         )
         rows.extend(
-            (item.key, notion_master_task_fields(item, details.get(item.key)))
+            (item.key, notion_master_task_fields(item, details.get(item.key)), False, "")
             for item in notion_items
         )
         result = MasterTaskSyncResult(
@@ -869,7 +914,7 @@ class NotionSchoolBoard:
             url=dashboard_url,
             database_created=created_database,
         )
-        for source_id, fields in rows:
+        for source_id, fields, initial_done, initial_notes in rows:
             current = existing.get(source_id)
             if current and current[1] == fields["Sync hash"]:
                 result.rows_unchanged += 1
@@ -882,7 +927,11 @@ class NotionSchoolBoard:
             else:
                 response = self.client.create_master_task(
                     database_id,
-                    {**fields, "Done": False, "Notes / progress": ""},
+                    {
+                        **fields,
+                        "Done": initial_done,
+                        "Notes / progress": initial_notes,
+                    },
                 )
                 result.rows_created += 1
                 result.task_urls[source_id] = str(response.get("url") or "")
