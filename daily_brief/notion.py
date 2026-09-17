@@ -25,6 +25,9 @@ SCHOOL_PRIORITIES = ["MUST", "SMART", "MAY", "Later", "Verify"]
 SCHOOL_KINDS = ["assignment", "quiz", "discussion_topic", "sub_assignment"]
 DAILY_PLAN_TITLE = "Today's Focus"
 DAILY_PLAN_STATUSES = ["To do", "Done"]
+MASTER_TASK_TITLE = "Tasks"
+MASTER_AREAS = ["Work", "School", "Connections", "Misc"]
+MASTER_SOURCE_TYPES = ["Canvas", "Notion"]
 
 
 class NotionError(RuntimeError):
@@ -126,6 +129,37 @@ def daily_plan_schema() -> dict[str, Any]:
         "Plan date": {"date": {}},
         "Task ID": {"rich_text": {}},
         "Rank": {"number": {"format": "number"}},
+    }
+
+
+def master_task_schema() -> dict[str, Any]:
+    """Schema for the one task source shared by desktop and mobile views."""
+    def options(values: Iterable[str]) -> dict[str, Any]:
+        return {"select": {"options": [{"name": value} for value in values]}}
+
+    return {
+        "Task": {"title": {}},
+        "Done": {"checkbox": {}},
+        "Area": options(MASTER_AREAS),
+        "Course": {"rich_text": {}},
+        "Source type": options(MASTER_SOURCE_TYPES),
+        "Source ID": {"rich_text": {}},
+        "Source URL": {"url": {}},
+        "Due": {"date": {}},
+        "Priority": options(SCHOOL_PRIORITIES),
+        "Effort": options(EFFORTS),
+        "Kind": {"rich_text": {}},
+        "Next step": {"rich_text": {}},
+        "Notes / progress": {"rich_text": {}},
+        "Instructions": {"rich_text": {}},
+        "Focus date": {"date": {}},
+        "Focus rank": {"number": {"format": "number"}},
+        "Focus reason": {"rich_text": {}},
+        "Needs verification": {"checkbox": {}},
+        "Cadence": options(CADENCES),
+        "Last touched": {"date": {}},
+        "Task type": options(TYPES),
+        "Sync hash": {"rich_text": {}},
     }
 
 
@@ -243,6 +277,37 @@ def daily_plan_properties(fields: dict[str, Any]) -> dict[str, Any]:
     unknown = set(fields) - set(builders)
     if unknown:
         raise ValueError(f"unknown Today's Plan properties: {', '.join(sorted(unknown))}")
+    return {name: builders[name](value) for name, value in fields.items()}
+
+
+def master_task_properties(fields: dict[str, Any]) -> dict[str, Any]:
+    builders = {
+        "Task": title_property,
+        "Done": lambda value: {"checkbox": bool(value)},
+        "Area": select_property,
+        "Course": rich_text_property,
+        "Source type": select_property,
+        "Source ID": rich_text_property,
+        "Source URL": lambda value: {"url": value or None},
+        "Due": date_property,
+        "Priority": select_property,
+        "Effort": select_property,
+        "Kind": rich_text_property,
+        "Next step": rich_text_property,
+        "Notes / progress": rich_text_property,
+        "Instructions": rich_text_property,
+        "Focus date": date_property,
+        "Focus rank": lambda value: {"number": value},
+        "Focus reason": rich_text_property,
+        "Needs verification": lambda value: {"checkbox": bool(value)},
+        "Cadence": select_property,
+        "Last touched": date_property,
+        "Task type": select_property,
+        "Sync hash": rich_text_property,
+    }
+    unknown = set(fields) - set(builders)
+    if unknown:
+        raise ValueError(f"unknown master Task properties: {', '.join(sorted(unknown))}")
     return {name: builders[name](value) for name, value in fields.items()}
 
 

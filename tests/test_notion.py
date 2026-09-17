@@ -17,6 +17,8 @@ from daily_brief.notion import (
     daily_plan_schema,
     date_property,
     rich_text_property,
+    master_task_properties,
+    master_task_schema,
     school_assignment_fields,
     school_database_schema,
     school_properties,
@@ -79,6 +81,23 @@ def test_property_payload_shapes_are_not_bare_strings() -> None:
     assert school_database_schema()["Notes / progress"] == {"rich_text": {}}
     assert daily_plan_schema()["Rank"] == {"number": {"format": "number"}}
     assert daily_plan_properties({"Time (hours)": 1.5}) == {"Time (hours)": {"number": 1.5}}
+    assert master_task_schema()["Done"] == {"checkbox": {}}
+    assert master_task_schema()["Focus rank"] == {"number": {"format": "number"}}
+    assert master_task_properties(
+        {
+            "Task": "Study for Quiz 2",
+            "Done": True,
+            "Area": "School",
+            "Focus date": date(2026, 9, 17),
+            "Focus rank": 1,
+        }
+    ) == {
+        "Task": {"title": [{"text": {"content": "Study for Quiz 2"}}]},
+        "Done": {"checkbox": True},
+        "Area": {"select": {"name": "School"}},
+        "Focus date": {"date": {"start": "2026-09-17"}},
+        "Focus rank": {"number": 1},
+    }
 
 
 def test_school_assignment_payload_includes_source_id_and_safe_next_step() -> None:

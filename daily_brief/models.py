@@ -121,6 +121,32 @@ class NotionSnapshot(Contract):
     warnings: list[str] = Field(default_factory=list)
 
 
+class NotionMasterTask(Contract):
+    """Normalized row in the single Notion task source of truth."""
+
+    key: str
+    page_id: str
+    url: str
+    name: str = Field(min_length=1, max_length=500)
+    source_type: Literal["Canvas", "Notion"]
+    area: Literal["Work", "School", "Connections", "Misc"]
+    course: str = Field(default="", max_length=200)
+    source_url: str = ""
+    done: bool = False
+    needs_verification: bool = False
+    due_at: AwareDatetime | None = None
+    deadline: date | None = None
+    priority: Literal["MUST", "SMART", "MAY", "Later", "Verify"] = "Later"
+    effort: Literal["S", "M", "L"] | None = None
+    kind: str = ""
+    next_step: str = Field(default="", max_length=1000)
+    notes: str = Field(default="", max_length=1000)
+    instructions: str = Field(default="", max_length=400)
+    focus_date: date | None = None
+    focus_rank: int | None = Field(default=None, ge=1, le=3)
+    focus_reason: str = Field(default="", max_length=240)
+
+
 class CalendarEvent(Contract):
     title: str
     start: AwareDatetime
