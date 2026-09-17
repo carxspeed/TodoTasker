@@ -421,6 +421,73 @@ def test_master_focus_marks_three_or_fewer_and_clears_old_focus_without_archivin
     assert fake.archived_rows == []
 
 
+def test_master_focus_prioritizes_assessment_and_targets_its_real_assignment() -> None:
+    from daily_brief.models import ClassificationOutput, ClassifiedItem
+    from datetime import datetime, timezone
+
+    ordinary = ClassifiedItem(
+        key="assignment:ordinary",
+        source="canvas",
+        name="Old worksheet",
+        tier="must",
+        effort="S",
+        effort_hours=0.5,
+        effort_source="points",
+    )
+    assessment = ordinary.model_copy(
+        update={
+            "key": "planner-assessment:quiz-2",
+            "name": "Study for Quiz 2",
+            "kind": "planner_assessment",
+            "effort": "M",
+            "effort_hours": 1.5,
+        }
+    )
+    classification = ClassificationOutput(
+        target_date=date(2026, 9, 17),
+        as_of=datetime(2026, 9, 17, tzinfo=timezone.utc),
+        must=[ordinary, assessment],
+    )
+    fake = FakeSchoolClient()
+    fake.children = [
+        {"type": "child_database", "id": "master", "child_database": {"title": "Tasks"}}
+    ]
+    fake.query_database_pages = lambda _database_id: [
+        {
+            "id": "ordinary-row",
+            "properties": {
+                "Source ID": text_prop("rich_text", ordinary.key),
+                "Focus date": date_prop(None),
+                "Focus rank": {"type": "number", "number": None},
+                "Focus reason": text_prop("rich_text", ""),
+            },
+        },
+        {
+            "id": "quiz-row",
+            "properties": {
+                "Source ID": text_prop("rich_text", "assignment:quiz-2"),
+                "Focus date": date_prop(None),
+                "Focus rank": {"type": "number", "number": None},
+                "Focus reason": text_prop("rich_text", ""),
+            },
+        },
+    ]
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    result = board.sync_master_focus(
+        classification,
+        guidance_by_key={assessment.key: "Study chapter 12, then check two problems."},
+        source_id_by_focus_key={assessment.key: "assignment:quiz-2"},
+        target_date=date(2026, 9, 17),
+    )
+
+    assert result.missing_source_ids == ()
+    assert fake.updated_rows[0][0] == "quiz-row"
+    assert fake.updated_rows[0][1]["Focus rank"] == 1
+    assert "imminent assessment" in fake.updated_rows[0][1]["Focus reason"]
+    assert fake.updated_rows[0][1]["Next step"].startswith("Study chapter 12")
+
+
 def test_school_context_reads_notes_and_status_without_canvas_bookkeeping() -> None:
     fake = FakeSchoolClient()
     fake.children = [

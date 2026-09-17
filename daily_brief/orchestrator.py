@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
+
+from rapidfuzz import fuzz
 
 from .atomic import atomic_write_json, atomic_write_text
 from .calendar import build_calendar_snapshot, fetch_ical
@@ -54,6 +57,41 @@ class SourceBundle:
     calendar: CalendarSnapshot | None
     statuses: dict[str, str]
     warnings: list[str]
+
+
+def _assessment_focus_aliases(
+    classification: ClassificationOutput, canvas: CanvasEnvelope | None
+) -> dict[str, str]:
+    """Map synthetic planner study prompts onto their matching real assignment row."""
+    if canvas is None:
+        return {}
+    aliases: dict[str, str] = {}
+    selected = [*classification.must, *classification.smart, *classification.may]
+    for item in selected:
+        if item.kind != "planner_assessment":
+            continue
+        target = re.sub(r"^study\s+for\s+", "", item.name, flags=re.IGNORECASE)
+        candidates = [
+            assignment
+            for assignment in canvas.assignments
+            if assignment.course.casefold() == item.course.casefold()
+        ]
+        scored: list[tuple[float, Any]] = []
+        for assignment in candidates:
+            score = float(fuzz.token_set_ratio(target, assignment.name))
+            if (
+                item.due_at is not None
+                and assignment.due_at is not None
+                and item.due_at.date() == assignment.due_at.date()
+            ):
+                score += 25.0
+            scored.append((score, assignment))
+        if not scored:
+            continue
+        score, match = max(scored, key=lambda value: value[0])
+        if score >= 70.0:
+            aliases[item.key] = match.key
+    return aliases
 
 
 class LiveSourceProvider:
@@ -670,6 +708,9 @@ class DailyBriefOrchestrator:
                         details_by_key=details_by_key,
                         excluded_course_ids=self.settings.canvas_excluded_course_ids,
                     )
+                    focus_aliases = _assessment_focus_aliases(
+                        classification, bundle.canvas
+                    )
                     plan_result = self.notion_delivery.sync_master_focus(
                         classification,
                         guidance_by_key=guidance_by_key,
@@ -683,6 +724,7 @@ class DailyBriefOrchestrator:
                             if guidance and guidance.focus
                             else ""
                         ),
+                        source_id_by_focus_key=focus_aliases,
                         target_date=target_date,
                     )
                     notion_result = master_result

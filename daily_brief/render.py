@@ -9,6 +9,8 @@ from .models import CalendarSnapshot, CanvasEnvelope, ClassificationOutput, Clas
 
 
 def deterministic_guidance(item: ClassifiedItem) -> str:
+    if item.kind == "planner_assessment":
+        return "Study the topics listed in the class planner, then do a short practice check."
     if item.source == "notion" and (not item.next_step.strip() or "unknown" in item.next_step.casefold()):
         return "Next step unknown — spend 10 minutes scoping it."
     if item.source == "notion":

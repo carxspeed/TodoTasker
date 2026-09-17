@@ -1061,6 +1061,7 @@ class NotionSchoolBoard:
         *,
         guidance_by_key: dict[str, str] | None = None,
         focus_keys: list[str] | None = None,
+        source_id_by_focus_key: dict[str, str] | None = None,
         focus_reason: str = "",
         target_date: date,
     ) -> MasterFocusSyncResult:
@@ -1080,7 +1081,24 @@ class NotionSchoolBoard:
 
         ordered = [*classification.must, *classification.smart, *classification.may]
         items_by_key = {item.key: item for item in ordered}
-        requested = focus_keys or [item.key for item in ordered[:3]]
+        if focus_keys:
+            requested = focus_keys
+        else:
+            imminent = next(
+                (item for item in ordered if item.kind == "planner_assessment"), None
+            )
+            requested = (
+                [imminent.key]
+                + [item.key for item in ordered if item.key != imminent.key][:2]
+                if imminent is not None
+                else [item.key for item in ordered[:3]]
+            )
+            if not focus_reason:
+                focus_reason = (
+                    "An imminent assessment needs study preparation before ordinary overdue work."
+                    if imminent is not None
+                    else "Start with the nearest required task, then continue only if time remains."
+                )
         selected = []
         selected_keys: set[str] = set()
         for key in requested:
@@ -1093,9 +1111,13 @@ class NotionSchoolBoard:
 
         result = MasterFocusSyncResult(self.parent_page_id, dashboard_url)
         guidance = guidance_by_key or {}
+        source_aliases = source_id_by_focus_key or {}
         missing: list[str] = []
+        selected_source_ids: set[str] = set()
         for rank, item in enumerate(selected, start=1):
-            current = existing.get(item.key)
+            source_id = source_aliases.get(item.key, item.key)
+            selected_source_ids.add(source_id)
+            current = existing.get(source_id)
             if not current:
                 missing.append(item.key)
                 continue
@@ -1118,7 +1140,7 @@ class NotionSchoolBoard:
             result.rows_focused += 1
 
         for source_id, (page_id, page) in existing.items():
-            if source_id in selected_keys:
+            if source_id in selected_source_ids:
                 continue
             had_focus = bool(
                 _property_date_start(page, "Focus date")

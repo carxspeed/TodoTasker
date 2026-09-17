@@ -14,6 +14,7 @@ from daily_brief.models import (
 )
 from daily_brief.notion import SchoolSyncResult
 from daily_brief.orchestrator import DailyBriefOrchestrator, LiveSourceProvider
+from daily_brief.orchestrator import _assessment_focus_aliases
 from daily_brief.state import StateStore
 from daily_brief.telegram import TelegramResult, build_summary
 
@@ -185,6 +186,37 @@ def test_live_source_provider_prefers_canvas_token(tmp_path: Path, monkeypatch) 
 
     assert result is expected
     assert opened == [("https://issaquah.instructure.com/", "test-canvas-token")]
+
+
+def test_assessment_focus_maps_to_matching_real_assignment() -> None:
+    from daily_brief.models import ClassificationOutput, ClassifiedItem
+
+    canvas = load_fixture("fixtures/sample_todo.json")
+    quiz = canvas.assignments[0].model_copy(
+        update={"key": "assignment:quiz-2", "name": "Quiz 2", "course": "Calculus"}
+    )
+    canvas = canvas.model_copy(update={"assignments": [quiz]})
+    assessment = ClassifiedItem(
+        key="planner-assessment:quiz-2",
+        source="canvas",
+        name="Study for Quiz 2",
+        tier="must",
+        effort="M",
+        effort_hours=1.5,
+        effort_source="points",
+        kind="planner_assessment",
+        due_at=quiz.due_at,
+        course="Calculus",
+    )
+    classification = ClassificationOutput(
+        target_date=TARGET,
+        as_of=datetime(2026, 9, 2, tzinfo=timezone.utc),
+        must=[assessment],
+    )
+
+    assert _assessment_focus_aliases(classification, canvas) == {
+        assessment.key: quiz.key
+    }
 
 
 def test_live_source_provider_uses_encrypted_session_if_token_expired(
