@@ -3,7 +3,7 @@
 Daily Brief is a local-first Windows tasker that combines:
 
 - assignments collected from Canvas;
-- tasks kept in Work, Connections, and Misc databases plus a School page with one table per class;
+- one unified Notion Tasks database with phone-friendly Work, School, Connections, Misc, and Today views;
 - events from a Google Calendar iCalendar feed;
 - an evening check-in and morning brief delivered through Telegram.
 
@@ -177,7 +177,7 @@ creation and bot setup.
    venv\Scripts\python.exe setup_notion_db.py
    ```
 
-The helper creates or validates **Work**, **Connections**, and **Misc** databases below the parent page. It also creates a **School** page containing a **General** table. During delivery, TodoTasker creates one additional table per non-excluded Canvas class on that same School page and fills it with assignments. Existing rows from an older top-level School database are copied into School / General before the old table is archived.
+The helper creates or validates the legacy **Work**, **Connections**, and **Misc** databases below the parent page. It also creates a **School** page containing a **General** table. These databases are safe migration inputs for existing installations.
 
 Work, Connections, Misc, and School / General use this schema:
 
@@ -190,11 +190,32 @@ Work, Connections, Misc, and School / General use this schema:
 - `Deadline`;
 - `Effort`.
 
-Each class table contains the assignment name, due time, status, priority, effort, next step, a user-editable `Notes / progress` field, a short AI summary of the instructions, and a Canvas link. Full Canvas descriptions and extracted attachment text stay in the run's bounded internal context instead of flooding the visible Notion table. Canvas ID, kind, and sync hash remain available as hidden bookkeeping fields. Repeated runs update matching rows instead of duplicating them and never overwrite `Notes / progress`. Set `Status` to `Done` for an in-person submission; future briefs will omit that assignment. Notes such as “finished the first half” are supplied to the guidance model on the next run. The excluded DECA course is never synchronized.
+After setup, preview the consolidation into the unified **Tasks** database:
 
-The main To Do List page also contains a generated **Today's Plan** table. It mirrors the same ordered MUST, SMART, and MAY tasks used by Telegram. The visible view shows the task, priority, course or area, time estimate, next step, status, and source link; internal `Rank`, `Task ID`, and `Plan date` fields support sorting and refreshes. Marking a row Done removes it from the next brief and plan.
+```powershell
+venv\Scripts\python.exe brief.py migrate-notion --dry-run
+```
 
-The table containing a manual task is its Area. Telegram check-ins route new tasks to the matching database and the daily brief reads active rows from all four logical areas. Add non-Canvas school tasks to **School / General**.
+Review the Canvas, Notion, unique-row, and duplicate counts. If `duplicates=none`, apply it:
+
+```powershell
+venv\Scripts\python.exe brief.py migrate-notion --apply
+```
+
+The migration is idempotent and leaves all legacy databases unchanged as a rollback copy. It creates one canonical row per task and preserves completion state and `Notes / progress` where available. After **Tasks** exists, both scheduled and manual runs use it as the source of truth.
+
+The Tasks database contains the task name, area, course, due time, priority, effort, next step, a user-editable `Notes / progress` field, a short instruction summary, and the source link. Full Canvas descriptions and extracted attachment text stay in the run's bounded internal context instead of flooding the visible Notion page. Source IDs and sync hashes remain available as bookkeeping fields in **All Tasks**. Repeated runs update matching rows instead of duplicating them and never overwrite `Notes / progress`. Check `Done` for an in-person submission; future briefs will omit that assignment. Notes such as “finished the first half” are supplied to the guidance model on the next run. The excluded DECA course is never synchronized.
+
+Use the database views instead of scanning one huge table:
+
+- **Today** is a compact phone-friendly list of at most three tasks. It shows the primary action first and links each item to its complete task row.
+- **School** groups assignments by course on the same page and sorts each course by due date.
+- **Work**, **Connections**, and **Misc** show only unfinished tasks in that area, sorted by due date.
+- **All Tasks** is the full administrative table, including the normally hidden sync fields.
+
+Telegram uses the same three-task focus as **Today** and reports how many selected tasks remain in the backlog. Assessments found in assignments or class planners—such as quizzes, tests, MCQs, FRQs, and timed writes—receive an explicit study action. Checking `Done` in any view updates the canonical row and removes it from later briefs.
+
+For a manual task, create a row in **Tasks** and choose its `Area`. For school work, also set `Course`; it will automatically appear under that class in the School view. Telegram check-ins route new tasks to the matching area.
 
 Add three to five real active items across the four databases so the first brief has useful data. Keep each row's `Name`, `Status`, and `Next step` current.
 
@@ -307,7 +328,7 @@ venv\Scripts\python.exe brief.py prepare `
 
 ## 11. Run the first live morning cycle
 
-The following commands are intentionally live. `prepare` updates local state. `deliver` synchronizes Canvas assignments into the per-class School tables and sends the brief through Telegram.
+The following commands are intentionally live. `prepare` updates local state. `deliver` synchronizes the canonical Tasks database, refreshes the three-item Today focus, and sends or edits the brief in Telegram.
 
 ```powershell
 $Today = Get-Date -Format 'yyyy-MM-dd'
@@ -318,11 +339,12 @@ venv\Scripts\python.exe brief.py deliver --target-date $Today
 Verify that:
 
 - a generated Markdown brief exists under `state\briefs`;
-- each Canvas class has one table on the School page and its assignments are present;
+- the School view has one group per Canvas class and its assignments are present;
+- Today contains no more than three focused tasks and is readable on a phone;
 - one morning message arrived in Telegram;
 - the Telegram button opens the To Do List dashboard.
 
-Run the same two commands once more. The system should update matching School rows and reuse the same Telegram message rather than create duplicates.
+Run the same two commands once more. The system should update matching Tasks rows and reuse the same Telegram message rather than create duplicates or repeat presentation text in `Next step`.
 
 Test the evening check-in separately:
 
@@ -459,7 +481,7 @@ Run `venv\Scripts\python.exe brief.py watchdog`, inspect the command output, and
 
 - Generated Markdown briefs remain in `state\briefs` even if both remote deliveries fail.
 - A corrupt `state\state.json` can restore from `state\state.json.bak`; if both are unusable, the app rebuilds safe defaults while preserving compatible configuration.
-- School rows use stable Canvas IDs and sync hashes so retries do not duplicate assignments; Telegram delivery remains idempotent.
+- Master Tasks rows use stable source IDs and sync hashes so retries do not duplicate assignments; Telegram delivery remains idempotent.
 - Check-in events are recorded append-first before downstream mutation.
 - Ambiguous or malformed check-in replies go to local quarantine instead of updating the wrong item.
 - Raw check-in text is not sent to the morning remote-model path.
