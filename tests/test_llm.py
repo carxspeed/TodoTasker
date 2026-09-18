@@ -136,6 +136,29 @@ def test_imminent_assessment_overrides_a_model_focus_on_old_work() -> None:
     assert focused.focus.primary_key == "planner-assessment:quiz"
 
 
+def test_same_day_assessment_does_not_override_model_focus() -> None:
+    assessment = task(99).model_copy(
+        update={
+            "key": "planner-assessment:quiz",
+            "kind": "planner_assessment",
+            "due_at": datetime(2026, 9, 2, 8, tzinfo=timezone.utc),
+        }
+    )
+    result = GuidanceResult(
+        focus=FocusPlan(
+            primary_key="assignment:1",
+            reason="It is the next actionable assignment.",
+            today_keys=["assignment:1"],
+        )
+    )
+
+    focused = guidance._enforce_assessment_focus(
+        result, [task(1), assessment], date(2026, 9, 2)
+    )
+
+    assert focused.focus.primary_key == "assignment:1"
+
+
 def test_large_request_is_bounded_without_dropping_retained_fields() -> None:
     selected = [task(index, description="x" * 400, next_step="y" * 1000) for index in range(20)]
     request = build_guidance_request(

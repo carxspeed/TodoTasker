@@ -105,6 +105,42 @@ def test_tomorrows_weekly_quiz_becomes_a_study_task_today() -> None:
     assert study.url == event.url
 
 
+def test_todays_quiz_is_only_a_reminder_and_not_a_focus_task() -> None:
+    quiz = canvas_item("assignment:99", due_hours=2).model_copy(
+        update={"name": "Quiz 2", "course": "Calculus", "kind": "quiz"}
+    )
+    event = PlannerEvent(
+        course="Calculus",
+        title="9/2 W Quiz 2",
+        date=TARGET,
+        text="9/2 W Quiz 2",
+        url="https://canvas.test/week-at-a-glance",
+    )
+
+    result = run([quiz], planner_events=[event])
+
+    selected = [*result.must, *result.smart, *result.may]
+    assert selected == []
+    assert result.verify == []
+
+
+def test_same_day_assessment_does_not_hide_unrelated_assignment() -> None:
+    worksheet = canvas_item("assignment:1", due_hours=2).model_copy(
+        update={"name": "Chapter worksheet", "course": "Calculus"}
+    )
+    event = PlannerEvent(
+        course="Calculus",
+        title="9/2 W Quiz 2",
+        date=TARGET,
+        text="9/2 W Quiz 2",
+        url="https://canvas.test/week-at-a-glance",
+    )
+
+    result = run([worksheet], planner_events=[event])
+
+    assert [item.key for item in result.must] == [worksheet.key]
+
+
 def test_schedule_r_for_thursday_is_not_part_of_the_assessment_name() -> None:
     event = PlannerEvent(
         course="Calculus",

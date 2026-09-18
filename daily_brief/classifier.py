@@ -7,6 +7,8 @@ import re
 from typing import Iterable, Literal
 from zoneinfo import ZoneInfo
 
+from rapidfuzz import fuzz
+
 from .models import (
     CalendarSnapshot,
     CanvasAssignment,
@@ -154,6 +156,34 @@ def _assessment_label(title: str) -> str:
         flags=re.I,
     )
     return label or "assessment"
+
+
+def _same_day_assessment_assignment_keys(
+    assignments: list[CanvasAssignment],
+    planner_events: list[PlannerEvent],
+    *,
+    target_date: date,
+    timezone_name: str,
+) -> set[str]:
+    """Keep test-day Canvas placeholders as reminders instead of work tasks."""
+    local_zone = ZoneInfo(timezone_name)
+    events = [event for event in planner_events if event.date == target_date]
+    matched: set[str] = set()
+    for assignment in assignments:
+        if assignment.due_at is None:
+            continue
+        if assignment.due_at.astimezone(local_zone).date() != target_date:
+            continue
+        for event in events:
+            if assignment.course.casefold() != event.course.casefold():
+                continue
+            if fuzz.token_set_ratio(
+                assignment.name,
+                _assessment_label(event.title),
+            ) >= 70:
+                matched.add(assignment.key)
+                break
+    return matched
 
 
 def _classify_planner_assessment(
@@ -316,12 +346,22 @@ def classify(
 ) -> ClassificationOutput:
     if as_of.tzinfo is None or as_of.utcoffset() is None:
         raise ValueError("as_of must be timezone-aware")
+    canvas_rows = list(canvas_items)
+    planner_rows = list(planner_events)
+    same_day_assessment_keys = _same_day_assessment_assignment_keys(
+        canvas_rows,
+        planner_rows,
+        target_date=target_date,
+        timezone_name=timezone_name,
+    )
     overrides = effort_overrides or {}
     seen = seen_assignments or {}
     classified: list[ClassifiedItem] = []
     verify: list[CanvasAssignment] = []
     verify_keys: set[str] = set()
-    for raw in canvas_items:
+    for raw in canvas_rows:
+        if raw.key in same_day_assessment_keys:
+            continue
         item, urgent_verify = _classify_canvas(raw, as_of, overrides)
         classified.append(item)
         if urgent_verify:
@@ -331,10 +371,10 @@ def classify(
         _classify_notion(raw, target_date, as_of, timezone_name) for raw in notion_items
     )
     assessment_events: dict[str, PlannerEvent] = {}
-    for event in planner_events:
-        # A same-day assessment is useful, but the daily brief only needs a prep prompt
-        # for today and tomorrow. Later dates remain in the calendar-style "Coming up" list.
-        if target_date <= event.date <= target_date + timedelta(days=1):
+    for event in planner_rows:
+        # Test-day events remain visible in "Coming up" as reminders. Only a future
+        # assessment becomes a study task that can consume today's focus capacity.
+        if target_date < event.date <= target_date + timedelta(days=1):
             assessment_events.setdefault(_planner_assessment_key(event), event)
     classified.extend(
         _classify_planner_assessment(event, as_of=as_of, timezone_name=timezone_name)
