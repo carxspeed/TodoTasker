@@ -8,6 +8,10 @@ from datetime import datetime, timedelta, tzinfo
 from .models import CalendarSnapshot, CanvasEnvelope, ClassificationOutput, ClassifiedItem, GuidanceResult
 
 
+def _format_hours(value: float) -> str:
+    return f"{value:.1f}".rstrip("0").rstrip(".")
+
+
 def deterministic_guidance(item: ClassifiedItem) -> str:
     if item.kind == "planner_assessment":
         return "Study the topics listed in the class planner, then do a short practice check."
@@ -121,7 +125,7 @@ def render_brief(
         [
             "",
             "Capacity",
-            f"- Selected ~{classification.selected_effort_hours:g}h of ~{classification.available_hours:g}h available.",
+            f"- Selected ~{_format_hours(classification.selected_effort_hours)}h of ~{_format_hours(classification.available_hours)}h available.",
         ]
     )
     if classification.overloaded:

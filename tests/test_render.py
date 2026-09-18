@@ -51,6 +51,17 @@ def test_updated_header_is_explicit() -> None:
     assert "Updated this morning" in render_brief(classification([]), updated=True)
 
 
+def test_capacity_hours_are_rounded_for_humans() -> None:
+    current = classification([item("assignment:1")]).model_copy(
+        update={"available_hours": 3.42101}
+    )
+
+    text = render_brief(current)
+
+    assert "Selected ~3h of ~3.4h available" in text
+    assert "3.42101" not in text
+
+
 def test_canvas_tasks_show_course_and_local_deadline() -> None:
     canvas = item("assignment:1").model_copy(
         update={
