@@ -288,11 +288,30 @@ def test_ollama_autostart_never_targets_a_remote_server() -> None:
     assert not guidance._is_local_ollama_url("https://example.com")
 
 
-def test_malformed_response_gets_no_repair_call() -> None:
+def test_malformed_local_response_gets_one_focused_repair_call() -> None:
     session = Session("not json")
     result = generate_guidance([task(1)], [], TOTALS, date(2026, 9, 2), session=session)
     assert result is None
-    assert session.post_calls == 1
+    assert session.post_calls == 2
+    assert "previous response failed strict validation" in session.payload["messages"][0]["content"]
+
+
+def test_local_repair_can_recover_a_valid_second_response() -> None:
+    request = build_guidance_request([task(1)], [], TOTALS, date(2026, 9, 2))
+
+    class RetrySession(Session):
+        def post(self, *args, **kwargs):
+            self.post_calls += 1
+            self.payload = kwargs["json"]
+            content = "not json" if self.post_calls == 1 else response_for(request.keys)
+            return Response({"message": {"content": content}})
+
+    session = RetrySession("")
+    result = generate_guidance([task(1)], [], TOTALS, date(2026, 9, 2), session=session)
+
+    assert result is not None
+    assert session.post_calls == 2
+    assert "previous response failed strict validation" in session.payload["messages"][0]["content"]
 
 
 def test_anthropic_generation_uses_current_api_parameters() -> None:
