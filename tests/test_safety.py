@@ -33,3 +33,10 @@ def test_example_environment_contains_no_credentials() -> None:
         "MICROSOFT_PASSWORD",
     ):
         assert entries[key] == ""
+
+
+def test_scheduled_tasks_can_catch_up_while_on_battery() -> None:
+    installer = Path("scripts/install-scheduled-tasks.ps1").read_text(encoding="utf-8")
+    assert "-StartWhenAvailable" in installer
+    assert "-AllowStartIfOnBatteries" in installer
+    assert "-DontStopIfGoingOnBatteries" in installer

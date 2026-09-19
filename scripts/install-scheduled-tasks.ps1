@@ -49,6 +49,8 @@ if ($Apply) {
     $Settings = New-ScheduledTaskSettingsSet `
         -StartWhenAvailable `
         -WakeToRun `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
         -RestartCount 3 `
         -RestartInterval (New-TimeSpan -Minutes 10) `
         -ExecutionTimeLimit (New-TimeSpan -Hours 2)

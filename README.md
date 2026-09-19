@@ -385,7 +385,11 @@ After reviewing the full paths and triggers printed by the preview, register the
 powershell -ExecutionPolicy Bypass -File scripts\install-scheduled-tasks.ps1 -Apply
 ```
 
-The tasks run only for the logged-on user, wake the computer, start after a missed trigger when possible, and retry a nonzero exit three times at ten-minute intervals. Repository setup and tests never create scheduled tasks automatically.
+The tasks run only for the logged-on user, wake the computer, start after a missed
+trigger when possible, continue on battery power, and retry a nonzero exit three
+times at ten-minute intervals. This lets a laptop that was asleep catch up after it
+wakes without Windows immediately terminating the run. Repository setup and tests
+never create scheduled tasks automatically.
 
 The commands also enforce these catch-up windows:
 
