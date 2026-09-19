@@ -1,4 +1,5 @@
-from datetime import date, datetime, timezone
+import json
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -515,6 +516,74 @@ def test_partial_canvas_response_retains_compatible_cached_assignments(tmp_path:
     bundle = orchestrator.fetch_sources(partial, TARGET, write_cache=False)
     assert [item.key for item in bundle.canvas.assignments] == ["assignment:101"]
     assert any("retained compatible cached" in value for value in bundle.canvas.data_warnings)
+
+
+def test_canvas_failure_uses_recent_cross_date_cache_with_error_code(tmp_path: Path) -> None:
+    orchestrator = make_orchestrator(tmp_path)
+    prior = Provider()
+    orchestrator.cache.save(
+        "canvas", prior.canvas, target_date=TARGET - timedelta(days=1)
+    )
+
+    class FailedCanvasProvider(Provider):
+        def fetch_canvas(self, target):
+            raise CanvasError(
+                "MICROSOFT_CREDENTIALS_REJECTED",
+                "Microsoft did not accept the stored email or password",
+                exit_code=2,
+            )
+
+    bundle = orchestrator.fetch_sources(
+        FailedCanvasProvider(), TARGET, write_cache=False
+    )
+
+    assert bundle.canvas is not None
+    assert bundle.statuses["canvas"] == "stale"
+    assert bundle.errors["canvas"] == "MICROSOFT_CREDENTIALS_REJECTED"
+    assert any("may omit recent changes" in warning for warning in bundle.warnings)
+
+
+def test_canvas_failure_rejects_cross_date_cache_older_than_72_hours(
+    tmp_path: Path,
+) -> None:
+    orchestrator = make_orchestrator(tmp_path)
+    prior = Provider()
+    orchestrator.cache.save(
+        "canvas", prior.canvas, target_date=TARGET - timedelta(days=4)
+    )
+    cache_path = tmp_path / "state" / "cache" / "canvas.json"
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    payload["cached_at"] = (datetime.now(timezone.utc) - timedelta(days=4)).isoformat()
+    cache_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    class FailedCanvasProvider(Provider):
+        def fetch_canvas(self, target):
+            raise CanvasError("SESSION_EXPIRED", "private detail", exit_code=2)
+
+    bundle = orchestrator.fetch_sources(
+        FailedCanvasProvider(), TARGET, write_cache=False
+    )
+
+    assert bundle.canvas is None
+    assert bundle.statuses["canvas"] == "unavailable"
+
+
+def test_delivery_log_records_sanitized_canvas_error_code(tmp_path: Path) -> None:
+    orchestrator = make_orchestrator(tmp_path, Guidance(), None, Telegram())
+
+    class FailedCanvasProvider(Provider):
+        def fetch_canvas(self, target):
+            raise CanvasError("SESSION_EXPIRED", "private detail", exit_code=2)
+
+    orchestrator.deliver(
+        FailedCanvasProvider(),
+        target_date=TARGET,
+        as_of=datetime(2026, 9, 2, 7, tzinfo=TZ),
+    )
+
+    log = (tmp_path / "state" / "runs.log").read_text(encoding="utf-8")
+    assert "canvas_error=SESSION_EXPIRED" in log
+    assert "private detail" not in log
 
 
 def test_uncertain_telegram_transport_does_not_count_as_definite_failure(tmp_path: Path) -> None:

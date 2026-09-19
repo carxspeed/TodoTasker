@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Callable
@@ -56,6 +56,7 @@ class SourceBundle:
     calendar: CalendarSnapshot | None
     statuses: dict[str, str]
     warnings: list[str]
+    errors: dict[str, str] = field(default_factory=dict)
 
 
 def _assessment_focus_aliases(
@@ -236,6 +237,7 @@ class DailyBriefOrchestrator:
     ) -> SourceBundle:
         statuses: dict[str, str] = {}
         warnings: list[str] = []
+        errors: dict[str, str] = {}
         canvas = None
         notion = None
         calendar = None
@@ -300,20 +302,40 @@ class DailyBriefOrchestrator:
             )
             if write_cache:
                 self.cache.save("canvas", canvas, target_date=target_date)
-        except Exception:
+        except Exception as exc:
+            error_code = exc.code if isinstance(exc, CanvasError) else "UNEXPECTED_ERROR"
+            errors["canvas"] = error_code
             cached = self.cache.load(
                 "canvas", CanvasEnvelope, target_date=target_date, require_target_match=True
             )
+            cross_date_cache = False
+            if cached is None:
+                stale = self.cache.load("canvas", CanvasEnvelope)
+                if stale is not None:
+                    stale_canvas, stale_at = stale
+                    cache_age = utc_now() - stale_at
+                    if timedelta(0) <= cache_age <= timedelta(hours=72):
+                        cached = (stale_canvas, stale_at)
+                        cross_date_cache = True
             if cached:
                 canvas, cached_at = cached
                 canvas = exclude_course_assignments(
                     canvas, self.settings.canvas_excluded_course_ids
                 )
-                statuses["canvas"] = "cached"
-                warnings.append(f"Canvas is cached from {cached_at.isoformat()}")
+                statuses["canvas"] = "stale" if cross_date_cache else "cached"
+                if cross_date_cache:
+                    warnings.append(
+                        f"Canvas live refresh failed ({error_code}); using a stale snapshot "
+                        f"from {cached_at.isoformat()} that may omit recent changes"
+                    )
+                else:
+                    warnings.append(f"Canvas is cached from {cached_at.isoformat()}")
             else:
                 statuses["canvas"] = "unavailable"
-                warnings.append("Canvas is unavailable; assignments were not treated as an empty success")
+                warnings.append(
+                    f"Canvas is unavailable ({error_code}); assignments were not treated "
+                    "as an empty success"
+                )
         if master_layout and self.notion_delivery is not None:
             try:
                 master_work = self.notion_delivery.get_master_work()
@@ -453,7 +475,7 @@ class DailyBriefOrchestrator:
                 warnings.append("Today's Plan status could not be read; source tasks were unchanged")
         if calendar:
             warnings.extend(calendar.warnings)
-        return SourceBundle(canvas, notion, calendar, statuses, warnings)
+        return SourceBundle(canvas, notion, calendar, statuses, warnings, errors)
 
     def _merge_canvas_observations(
         self, state: DailyBriefState, canvas: CanvasEnvelope, observed_at: datetime
@@ -816,7 +838,8 @@ class DailyBriefOrchestrator:
             f"{now.isoformat()} | {'ok' if success else 'partial'} | "
             f"canvas={bundle.statuses['canvas']} notion={bundle.statuses['notion']} "
             f"calendar={bundle.statuses['calendar']} guidance={'prepared' if unchanged else 'deterministic'} "
-            f"telegram={status} diff={'unchanged' if unchanged else 'changed'}\n"
+            f"telegram={status} diff={'unchanged' if unchanged else 'changed'} "
+            f"canvas_error={bundle.errors.get('canvas', 'none')}\n"
         )
         atomic_write_text(log_path, prior_log + line)
         return text, status, state
