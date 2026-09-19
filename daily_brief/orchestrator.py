@@ -106,17 +106,28 @@ class LiveSourceProvider:
         self.fixture = fixture
         self.profile = profile
 
-    def _canvas_session_attempt(self, operation: Callable[[Any], Any]) -> Any:
+    def _canvas_session_attempt(
+        self,
+        operation: Callable[[Any], Any],
+        *,
+        headless: bool,
+        renew: bool,
+    ) -> Any:
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as playwright:
-            with open_saved_canvas_context(playwright, self.profile) as context:
-                ensure_canvas_session(
-                    context,
-                    str(self.settings.canvas_base),
-                    microsoft_email=self.settings.microsoft_email,
-                    microsoft_password=self.settings.microsoft_password,
-                )
+            with open_saved_canvas_context(
+                playwright, self.profile, headless=headless
+            ) as context:
+                if renew:
+                    ensure_canvas_session(
+                        context,
+                        str(self.settings.canvas_base),
+                        microsoft_email=self.settings.microsoft_email,
+                        microsoft_password=self.settings.microsoft_password,
+                    )
+                else:
+                    verify_session(context.request, str(self.settings.canvas_base))
                 return operation(context)
 
     def _run_canvas_session(self, operation: Callable[[Any], Any]) -> Any:
@@ -128,7 +139,11 @@ class LiveSourceProvider:
         }
         for attempt in range(2):
             try:
-                return self._canvas_session_attempt(operation)
+                return self._canvas_session_attempt(
+                    operation,
+                    headless=attempt == 0,
+                    renew=attempt == 1,
+                )
             except CanvasError as exc:
                 if attempt or exc.code not in retryable:
                     raise

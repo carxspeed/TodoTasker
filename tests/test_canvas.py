@@ -167,6 +167,7 @@ def test_expired_canvas_session_renews_through_microsoft() -> None:
 
         def goto(self, url, **kwargs):
             self.destination = url
+            self.url = "https://canvas.test/"
 
         def wait_for_timeout(self, value):
             raise AssertionError("zero renewal wait should skip timeout")
@@ -190,7 +191,6 @@ def test_expired_canvas_session_renews_through_microsoft() -> None:
 def test_expired_session_uses_stored_credentials_only_on_microsoft() -> None:
     responses = iter(
         [
-            Response(200, ValueError(), headers={"content-type": "text/html"}),
             Response(200, ValueError(), headers={"content-type": "text/html"}),
             Response(200, {"id": 42, "name": "Student"}),
         ]
@@ -230,6 +230,9 @@ def test_expired_session_uses_stored_credentials_only_on_microsoft() -> None:
         def click(self):
             clicked.append(self.selector)
 
+        def evaluate(self, script):
+            evaluated.append((self.selector, script))
+
     class Page:
         url = ""
         closed = False
@@ -246,7 +249,7 @@ def test_expired_session_uses_stored_credentials_only_on_microsoft() -> None:
         def close(self):
             self.closed = True
 
-    filled, clicked, waits = [], [], []
+    filled, clicked, evaluated, waits = [], [], [], []
     page = Page()
     context = type("Context", (), {"request": Request(), "new_page": lambda self: page})()
 
@@ -263,8 +266,14 @@ def test_expired_session_uses_stored_credentials_only_on_microsoft() -> None:
         ("input[type='email'], input[name='loginfmt'], #i0116", "student@example.test"),
         ("input[type='password'], input[name='passwd'], #i0118", "password"),
     ]
-    assert clicked == ["#idSIButton9, input[type='submit']"] * 2
-    assert waits == []
+    assert evaluated == [
+        (
+            "#idSIButton9",
+            "el => el.click()",
+        )
+    ]
+    assert clicked == ["#idSIButton9:visible, input[type='submit']:visible"]
+    assert waits == [2_000]
     assert page.closed is True
 
 
@@ -308,8 +317,17 @@ def test_microsoft_stay_signed_in_prompt_is_accepted_after_password() -> None:
         def fill(self, _value):
             return None
 
+        def press_sequentially(self, _value, **_kwargs):
+            return None
+
+        def press(self, _key):
+            return None
+
         def click(self):
             clicks.append(self.selector)
+
+        def evaluate(self, _script):
+            return None
 
     class Page:
         url = ""
@@ -380,8 +398,17 @@ def test_microsoft_account_picker_uses_another_account_before_filling_email() ->
         def fill(self, _value):
             return None
 
+        def press_sequentially(self, _value, **_kwargs):
+            return None
+
+        def press(self, _key):
+            return None
+
         def click(self):
             clicks.append(self.selector)
+
+        def evaluate(self, _script):
+            return None
 
     class Page:
         url = ""
@@ -421,7 +448,6 @@ def test_microsoft_renewal_waits_for_the_canvas_redirect() -> None:
             Response(200, ValueError(), headers={"content-type": "text/html"}),
             Response(200, ValueError(), headers={"content-type": "text/html"}),
             Response(200, ValueError(), headers={"content-type": "text/html"}),
-            Response(200, ValueError(), headers={"content-type": "text/html"}),
             Response(200, {"id": 42}),
         ]
     )
@@ -447,7 +473,16 @@ def test_microsoft_renewal_waits_for_the_canvas_redirect() -> None:
         def fill(self, _value):
             return None
 
+        def press_sequentially(self, _value, **_kwargs):
+            return None
+
+        def press(self, _key):
+            return None
+
         def click(self):
+            return None
+
+        def evaluate(self, _script):
             return None
 
     class Page:
@@ -476,7 +511,7 @@ def test_microsoft_renewal_waits_for_the_canvas_redirect() -> None:
         microsoft_password="password",
         renewal_wait_ms=0,
     ) == {"id": 42}
-    assert waits == [2_000, 2_000]
+    assert waits == [2_000, 2_000, 2_000]
 
 
 def test_microsoft_rejected_credentials_are_reported_without_page_text() -> None:
@@ -511,7 +546,16 @@ def test_microsoft_rejected_credentials_are_reported_without_page_text() -> None
         def fill(self, _value):
             return None
 
+        def press_sequentially(self, _value, **_kwargs):
+            return None
+
+        def press(self, _key):
+            return None
+
         def click(self):
+            return None
+
+        def evaluate(self, _script):
             return None
 
     class Page:

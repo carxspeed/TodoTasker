@@ -291,11 +291,14 @@ press Enter. TodoTasker verifies Canvas before saving the session.
 The browser session and Microsoft credentials are encrypted with Windows DPAPI and stored in
 `.private\canvas-session.dpapi` and `.private\secrets.dpapi`. They are decrypted only in memory; TodoTasker does not
 retain a Chromium profile or plaintext `storage-state.json`. When Canvas expires the
-saved session, TodoTasker opens a headless login only to Canvas and Microsoft’s
-approved HTTPS login domains, submits the encrypted credentials, and re-encrypts the
-renewed session. It never types them into a Canvas or third-party page. The scheduled
-authentication check warns you in Telegram only if this renewal fails (for example,
-after a password change or a new Microsoft challenge).
+saved session, TodoTasker verifies it headlessly and then opens a temporary real
+Chromium window only for Microsoft renewal. It submits the encrypted credentials,
+accepts Microsoft's recognized “Stay signed in?” prompt, re-encrypts the renewed
+cookies, and closes the window without user input. The encrypted session is an
+automatic DPAPI-protected cookie cache, not a recurring manual-login step. Credentials
+are typed only into Microsoft's approved HTTPS login domains, never into Canvas or a
+third-party page. The scheduled authentication check warns you in Telegram only if
+renewal fails (for example, after a password change or a new Microsoft challenge).
 
 ## 9. Verify each read-only connection
 

@@ -291,8 +291,8 @@ def test_canvas_session_retries_one_transient_failure(tmp_path: Path, monkeypatc
     provider = LiveSourceProvider(settings)
     attempts = []
 
-    def attempt(operation):
-        attempts.append(len(attempts) + 1)
+    def attempt(operation, **kwargs):
+        attempts.append(kwargs)
         if len(attempts) == 1:
             raise CanvasError("SESSION_EXPIRED", "transient redirect", exit_code=2)
         return operation(object())
@@ -300,7 +300,10 @@ def test_canvas_session_retries_one_transient_failure(tmp_path: Path, monkeypatc
     monkeypatch.setattr(provider, "_canvas_session_attempt", attempt)
 
     assert provider._run_canvas_session(lambda _context: "ok") == "ok"
-    assert attempts == [1, 2]
+    assert attempts == [
+        {"headless": True, "renew": False},
+        {"headless": False, "renew": True},
+    ]
 
 
 def test_canvas_session_does_not_retry_rejected_credentials(
@@ -310,8 +313,8 @@ def test_canvas_session_does_not_retry_rejected_credentials(
     provider = LiveSourceProvider(settings)
     attempts = []
 
-    def attempt(_operation):
-        attempts.append(len(attempts) + 1)
+    def attempt(_operation, **kwargs):
+        attempts.append(kwargs)
         raise CanvasError(
             "MICROSOFT_CREDENTIALS_REJECTED",
             "Microsoft did not accept the stored email or password",
@@ -324,7 +327,7 @@ def test_canvas_session_does_not_retry_rejected_credentials(
         provider._run_canvas_session(lambda _context: "never")
 
     assert rejected.value.code == "MICROSOFT_CREDENTIALS_REJECTED"
-    assert attempts == [1]
+    assert attempts == [{"headless": True, "renew": False}]
 
 
 def test_prepare_dry_run_makes_one_call_and_writes_nothing(tmp_path: Path) -> None:

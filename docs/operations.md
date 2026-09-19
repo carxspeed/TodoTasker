@@ -38,7 +38,10 @@ after one save or ten minutes.
 
 The Canvas token is restricted to the configured Canvas HTTPS origin. The fallback
 browser state is DPAPI-encrypted under `.private` and decrypted only in memory; no
-persistent Chromium profile or plaintext storage state is retained.
+persistent Chromium profile or plaintext storage state is retained. Normal checks are
+headless. If renewal is required, TodoTasker briefly launches real Chromium, submits
+the stored credentials, handles Microsoft's recognized “Stay signed in?” prompt,
+encrypts the renewed cookies, and closes Chromium without user input.
 Run `canvas.py auth-check` to verify unattended access.
 
 No live mutation should be attempted until the corresponding fixture and transport-mock tests pass.

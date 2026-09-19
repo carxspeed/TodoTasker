@@ -74,6 +74,7 @@ MICROSOFT_LOGIN_HOSTS = frozenset(
         "login.microsoft.com",
     }
 )
+MICROSOFT_SUBMIT_SELECTOR = "#idSIButton9:visible, input[type='submit']:visible"
 
 
 class CanvasError(RuntimeError):
@@ -397,6 +398,7 @@ def open_saved_canvas_context(
     playwright,
     profile: str | Path | None = None,
     *,
+    headless: bool = True,
     protect: Callable[[bytes], bytes] = dpapi_protect,
     unprotect: Callable[[bytes], bytes] = dpapi_unprotect,
     harden: Callable[[Path], None] = restrict_windows_acl,
@@ -405,7 +407,7 @@ def open_saved_canvas_context(
     state = load_canvas_session(profile, unprotect=unprotect)
     browser = None
     try:
-        browser = playwright.chromium.launch(headless=True)
+        browser = playwright.chromium.launch(headless=headless)
         context = browser.new_context(storage_state=state)
     except Exception as exc:
         if browser is not None:
@@ -500,7 +502,7 @@ def _complete_microsoft_login(page, email: str, password: str) -> None:
             "SESSION_EXPIRED", "Microsoft sign-in origin changed", exit_code=2
         )
     email_input.fill(email)
-    page.locator("#idSIButton9, input[type='submit']").first.click()
+    page.locator(MICROSOFT_SUBMIT_SELECTOR).first.click()
 
     password_input = page.locator(
         "input[type='password'], input[name='passwd'], #i0118"
@@ -517,7 +519,7 @@ def _complete_microsoft_login(page, email: str, password: str) -> None:
             "SESSION_EXPIRED", "Microsoft sign-in origin changed", exit_code=2
         )
     password_input.fill(password)
-    page.locator("#idSIButton9, input[type='submit']").first.click()
+    page.locator("#idSIButton9").evaluate("el => el.click()")
 
 
 def _microsoft_sign_in_issue(page) -> CanvasError | None:
@@ -556,27 +558,36 @@ def _accept_microsoft_stay_signed_in(page) -> None:
 
 
 def _wait_for_canvas_session(
-    page, context, base_url: str, *, attempts: int = 8, interval_ms: int = 2_000
+    page, context, base_url: str, *, attempts: int = 12, interval_ms: int = 2_000
 ) -> dict[str, Any]:
     """Wait for Microsoft to return to Canvas instead of assuming a fixed redirect speed."""
     last_error: CanvasError | None = None
-    for attempt in range(attempts):
-        _accept_microsoft_stay_signed_in(page)
+    for _attempt in range(attempts):
+        if interval_ms:
+            page.wait_for_timeout(interval_ms)
         issue = _microsoft_sign_in_issue(page)
         if issue is not None:
             raise issue
+        _accept_microsoft_stay_signed_in(page)
         try:
             return verify_session(context.request, base_url)
         except CanvasError as exc:
             if exc.code != "SESSION_EXPIRED":
                 raise
             last_error = exc
-        if attempt + 1 < attempts:
-            page.wait_for_timeout(interval_ms)
     assert last_error is not None
-    if _trusted_microsoft_login_url(getattr(page, "url", "")) and page.locator(
+    email_input = page.locator(
         "input[type='email'], input[name='loginfmt'], #i0116"
-    ).count():
+    ).first
+    password_input = page.locator(
+        "input[type='password'], input[name='passwd'], #i0118"
+    ).first
+    if (
+        _trusted_microsoft_login_url(getattr(page, "url", ""))
+        and email_input.count()
+        and email_input.is_visible()
+        and not (password_input.count() and password_input.is_visible())
+    ):
         raise CanvasError(
             "MICROSOFT_CREDENTIALS_REJECTED",
             "Microsoft returned to sign-in after the stored credentials were submitted",
@@ -611,11 +622,15 @@ def ensure_canvas_session(
         )
         if renewal_wait_ms:
             page.wait_for_timeout(renewal_wait_ms)
-        try:
-            return verify_session(context.request, base)
-        except CanvasError as exc:
-            if exc.code != "SESSION_EXPIRED":
-                raise
+        # Do not issue another Canvas request while Microsoft's OAuth transaction is
+        # in progress. A second redirect can replace the login state/cookies backing
+        # the page and make an otherwise valid submission fail with AADSTS90100.
+        if _origin(getattr(page, "url", "")) == _origin(base):
+            try:
+                return verify_session(context.request, base)
+            except CanvasError as exc:
+                if exc.code != "SESSION_EXPIRED":
+                    raise
         if not (microsoft_email and microsoft_password):
             raise CanvasError(
                 "SESSION_EXPIRED",
@@ -623,7 +638,6 @@ def ensure_canvas_session(
                 exit_code=2,
             )
         _complete_microsoft_login(page, microsoft_email, microsoft_password)
-        _accept_microsoft_stay_signed_in(page)
         return _wait_for_canvas_session(page, context, base)
     except CanvasError as exc:
         if exc.code == "SESSION_EXPIRED":
