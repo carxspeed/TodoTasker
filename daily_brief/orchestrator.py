@@ -22,7 +22,6 @@ from .canvas import (
     fetch_live,
     load_fixture,
     open_saved_canvas_context,
-    save_canvas_session,
     verify_session,
 )
 from .classifier import classify
@@ -106,7 +105,7 @@ class LiveSourceProvider:
         self.fixture = fixture
         self.profile = profile
 
-    def _fetch_canvas_session(self, target_date: date) -> CanvasEnvelope:
+    def _canvas_session_attempt(self, operation: Callable[[Any], Any]) -> Any:
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as playwright:
@@ -117,14 +116,33 @@ class LiveSourceProvider:
                     microsoft_email=self.settings.microsoft_email,
                     microsoft_password=self.settings.microsoft_password,
                 )
-                save_canvas_session(context, self.profile)
-                return fetch_live(
-                    context.request,
-                    str(self.settings.canvas_base),
-                    target_date,
-                    self.settings.timezone,
-                    excluded_course_ids=self.settings.canvas_excluded_course_ids,
-                )
+                return operation(context)
+
+    def _run_canvas_session(self, operation: Callable[[Any], Any]) -> Any:
+        retryable = {
+            "SESSION_EXPIRED",
+            "CANVAS_BROWSER_ERROR",
+            "CANVAS_BROWSER_CLOSED",
+            "CANVAS_TEMPORARY_FAILURE",
+        }
+        for attempt in range(2):
+            try:
+                return self._canvas_session_attempt(operation)
+            except CanvasError as exc:
+                if attempt or exc.code not in retryable:
+                    raise
+        raise AssertionError("Canvas session retry loop exited unexpectedly")
+
+    def _fetch_canvas_session(self, target_date: date) -> CanvasEnvelope:
+        return self._run_canvas_session(
+            lambda context: fetch_live(
+                context.request,
+                str(self.settings.canvas_base),
+                target_date,
+                self.settings.timezone,
+                excluded_course_ids=self.settings.canvas_excluded_course_ids,
+            )
+        )
 
     def fetch_canvas(self, target_date: date) -> CanvasEnvelope:
         if self.fixture:
@@ -161,16 +179,7 @@ class LiveSourceProvider:
                     raise
                 token_failed = True
 
-        from playwright.sync_api import sync_playwright
-
-        with sync_playwright() as playwright:
-            with open_saved_canvas_context(playwright, self.profile) as context:
-                ensure_canvas_session(
-                    context,
-                    str(self.settings.canvas_base),
-                    microsoft_email=self.settings.microsoft_email,
-                    microsoft_password=self.settings.microsoft_password,
-                )
+        self._run_canvas_session(lambda _context: None)
         return "session_fallback" if token_failed else "session"
 
     def fetch_notion(self) -> NotionSnapshot:

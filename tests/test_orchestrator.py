@@ -2,6 +2,8 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
+
 import daily_brief.orchestrator as orchestrator_module
 from daily_brief.canvas import CanvasError, load_fixture
 from daily_brief.config import load_settings
@@ -281,6 +283,47 @@ def test_canvas_auth_check_reports_working_token(tmp_path: Path, monkeypatch) ->
     assert LiveSourceProvider(settings).check_canvas_auth() == "token"
     assert len(checked) == 1
     assert checked[0][1] == "https://issaquah.instructure.com/"
+
+
+def test_canvas_session_retries_one_transient_failure(tmp_path: Path, monkeypatch) -> None:
+    settings = load_settings(tmp_path / "missing.env")
+    provider = LiveSourceProvider(settings)
+    attempts = []
+
+    def attempt(operation):
+        attempts.append(len(attempts) + 1)
+        if len(attempts) == 1:
+            raise CanvasError("SESSION_EXPIRED", "transient redirect", exit_code=2)
+        return operation(object())
+
+    monkeypatch.setattr(provider, "_canvas_session_attempt", attempt)
+
+    assert provider._run_canvas_session(lambda _context: "ok") == "ok"
+    assert attempts == [1, 2]
+
+
+def test_canvas_session_does_not_retry_rejected_credentials(
+    tmp_path: Path, monkeypatch
+) -> None:
+    settings = load_settings(tmp_path / "missing.env")
+    provider = LiveSourceProvider(settings)
+    attempts = []
+
+    def attempt(_operation):
+        attempts.append(len(attempts) + 1)
+        raise CanvasError(
+            "MICROSOFT_CREDENTIALS_REJECTED",
+            "Microsoft did not accept the stored email or password",
+            exit_code=2,
+        )
+
+    monkeypatch.setattr(provider, "_canvas_session_attempt", attempt)
+
+    with pytest.raises(CanvasError) as rejected:
+        provider._run_canvas_session(lambda _context: "never")
+
+    assert rejected.value.code == "MICROSOFT_CREDENTIALS_REJECTED"
+    assert attempts == [1]
 
 
 def test_prepare_dry_run_makes_one_call_and_writes_nothing(tmp_path: Path) -> None:

@@ -505,13 +505,42 @@ def _complete_microsoft_login(page, email: str, password: str) -> None:
     password_input = page.locator(
         "input[type='password'], input[name='passwd'], #i0118"
     ).first
-    password_input.wait_for(state="visible", timeout=20_000)
+    try:
+        password_input.wait_for(state="visible", timeout=20_000)
+    except Exception as exc:
+        issue = _microsoft_sign_in_issue(page)
+        if issue is not None:
+            raise issue from exc
+        raise
     if not _trusted_microsoft_login_url(getattr(page, "url", "")):
         raise CanvasError(
             "SESSION_EXPIRED", "Microsoft sign-in origin changed", exit_code=2
         )
     password_input.fill(password)
     page.locator("#idSIButton9, input[type='submit']").first.click()
+
+
+def _microsoft_sign_in_issue(page) -> CanvasError | None:
+    """Classify Microsoft failures without copying account data into logs."""
+    if not _trusted_microsoft_login_url(getattr(page, "url", "")):
+        return None
+    for selector in ("#passwordError", "#usernameError"):
+        locator = page.locator(selector).first
+        if locator.count() and locator.is_visible():
+            return CanvasError(
+                "MICROSOFT_CREDENTIALS_REJECTED",
+                "Microsoft did not accept the stored email or password",
+                exit_code=2,
+            )
+    for selector in ("#errorText", "[role='alert']"):
+        locator = page.locator(selector).first
+        if locator.count() and locator.is_visible():
+            return CanvasError(
+                "MICROSOFT_SIGN_IN_CHALLENGE",
+                "Microsoft requires attention before automatic sign-in can continue",
+                exit_code=2,
+            )
+    return None
 
 
 def _accept_microsoft_stay_signed_in(page) -> None:
@@ -532,6 +561,10 @@ def _wait_for_canvas_session(
     """Wait for Microsoft to return to Canvas instead of assuming a fixed redirect speed."""
     last_error: CanvasError | None = None
     for attempt in range(attempts):
+        _accept_microsoft_stay_signed_in(page)
+        issue = _microsoft_sign_in_issue(page)
+        if issue is not None:
+            raise issue
         try:
             return verify_session(context.request, base_url)
         except CanvasError as exc:
@@ -545,8 +578,8 @@ def _wait_for_canvas_session(
         "input[type='email'], input[name='loginfmt'], #i0116"
     ).count():
         raise CanvasError(
-            "SESSION_EXPIRED",
-            "Microsoft returned to its sign-in form after the stored credentials were submitted",
+            "MICROSOFT_CREDENTIALS_REJECTED",
+            "Microsoft returned to sign-in after the stored credentials were submitted",
             exit_code=2,
         )
     raise last_error

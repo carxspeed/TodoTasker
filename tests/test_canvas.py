@@ -209,7 +209,14 @@ def test_expired_session_uses_stored_credentials_only_on_microsoft() -> None:
             return self
 
         def count(self):
-            return 0 if self.selector == "#KmsiDescription" else 1
+            hidden = {
+                "#KmsiDescription",
+                "#passwordError",
+                "#usernameError",
+                "#errorText",
+                "[role='alert']",
+            }
+            return 0 if self.selector in hidden else 1
 
         def is_visible(self):
             return self.count() > 0
@@ -355,7 +362,14 @@ def test_microsoft_account_picker_uses_another_account_before_filling_email() ->
             return self
 
         def count(self):
-            return 0 if "type='email'" in self.selector or self.selector == "#KmsiDescription" else 1
+            hidden = {
+                "#KmsiDescription",
+                "#passwordError",
+                "#usernameError",
+                "#errorText",
+                "[role='alert']",
+            }
+            return 0 if "type='email'" in self.selector or self.selector in hidden else 1
 
         def is_visible(self):
             return self.count() > 0
@@ -463,6 +477,75 @@ def test_microsoft_renewal_waits_for_the_canvas_redirect() -> None:
         renewal_wait_ms=0,
     ) == {"id": 42}
     assert waits == [2_000, 2_000]
+
+
+def test_microsoft_rejected_credentials_are_reported_without_page_text() -> None:
+    responses = iter(
+        [
+            Response(200, ValueError(), headers={"content-type": "text/html"}),
+            Response(200, ValueError(), headers={"content-type": "text/html"}),
+        ]
+    )
+
+    class Request:
+        def get(self, *args, **kwargs):
+            return next(responses)
+
+    class Locator:
+        def __init__(self, selector):
+            self.selector = selector
+
+        @property
+        def first(self):
+            return self
+
+        def count(self):
+            return 1
+
+        def is_visible(self):
+            return self.selector == "#passwordError"
+
+        def wait_for(self, **_kwargs):
+            return None
+
+        def fill(self, _value):
+            return None
+
+        def click(self):
+            return None
+
+    class Page:
+        url = ""
+
+        def goto(self, *_args, **_kwargs):
+            self.url = "https://login.microsoftonline.com/tenant"
+
+        def locator(self, selector):
+            return Locator(selector)
+
+        def wait_for_timeout(self, _value):
+            return None
+
+        def close(self):
+            return None
+
+    context = type(
+        "Context",
+        (),
+        {"request": Request(), "new_page": lambda self: Page()},
+    )()
+
+    with pytest.raises(CanvasError) as rejected:
+        ensure_canvas_session(
+            context,
+            "https://canvas.test",
+            microsoft_email="student@example.test",
+            microsoft_password="not-logged",
+            renewal_wait_ms=0,
+        )
+
+    assert rejected.value.code == "MICROSOFT_CREDENTIALS_REJECTED"
+    assert "not-logged" not in str(rejected.value)
 
 
 def test_missing_saved_session_requires_login(tmp_path: Path) -> None:
