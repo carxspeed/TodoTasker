@@ -221,14 +221,19 @@ def test_expired_session_uses_stored_credentials_only_on_microsoft() -> None:
         def is_visible(self):
             return self.count() > 0
 
+        def is_enabled(self):
+            return True
+
         def wait_for(self, **kwargs):
             assert kwargs["state"] == "visible"
 
         def fill(self, value):
             filled.append((self.selector, value))
 
-        def click(self):
+        def click(self, **_kwargs):
             clicked.append(self.selector)
+            if len(filled) == 2:
+                page.url = "https://canvas.test/"
 
         def evaluate(self, script):
             evaluated.append((self.selector, script))
@@ -266,14 +271,12 @@ def test_expired_session_uses_stored_credentials_only_on_microsoft() -> None:
         ("input[type='email'], input[name='loginfmt'], #i0116", "student@example.test"),
         ("input[type='password'], input[name='passwd'], #i0118", "password"),
     ]
-    assert evaluated == [
-        (
-            "#idSIButton9",
-            "el => el.click()",
-        )
+    assert evaluated == []
+    assert clicked == [
+        "#idSIButton9:visible, input[type='submit']:visible",
+        "#idSIButton9:visible, input[type='submit']:visible",
     ]
-    assert clicked == ["#idSIButton9:visible, input[type='submit']:visible"]
-    assert waits == [2_000]
+    assert waits == [500, 2_000]
     assert page.closed is True
 
 
@@ -511,7 +514,99 @@ def test_microsoft_renewal_waits_for_the_canvas_redirect() -> None:
         microsoft_password="password",
         renewal_wait_ms=0,
     ) == {"id": 42}
-    assert waits == [2_000, 2_000, 2_000]
+    assert waits == [500, 2_000, 2_000, 2_000]
+
+
+def test_microsoft_password_submit_falls_back_to_enter_when_click_is_ignored() -> None:
+    responses = iter(
+        [
+            Response(200, ValueError(), headers={"content-type": "text/html"}),
+            Response(200, {"id": 42}),
+        ]
+    )
+
+    class Request:
+        def get(self, *args, **kwargs):
+            return next(responses)
+
+    class Locator:
+        def __init__(self, selector):
+            self.selector = selector
+
+        @property
+        def first(self):
+            return self
+
+        def count(self):
+            return 0 if self.selector in {
+                "#KmsiDescription",
+                "#passwordError",
+                "#usernameError",
+                "#errorText",
+                "[role='alert']",
+            } else 1
+
+        def is_visible(self):
+            if "type='email'" in self.selector:
+                return page.phase == "email"
+            if "type='password'" in self.selector:
+                return page.phase == "password"
+            if self.selector == "#idSIButton9:visible, input[type='submit']:visible":
+                return page.phase in {"email", "password"}
+            return False
+
+        def is_enabled(self):
+            return self.is_visible()
+
+        def wait_for(self, **_kwargs):
+            return None
+
+        def fill(self, _value):
+            return None
+
+        def click(self, **_kwargs):
+            if page.phase == "email":
+                page.phase = "password"
+                page.url = "https://login.microsoftonline.com/tenant/password"
+            else:
+                password_clicks.append(True)  # Intentionally swallowed by the page.
+
+        def press(self, key):
+            if key == "Enter" and page.phase == "password":
+                enter_presses.append(True)
+                page.phase = "redirected"
+                page.url = "https://canvas.test/"
+
+    class Page:
+        url = ""
+        phase = "email"
+
+        def goto(self, *_args, **_kwargs):
+            self.url = "https://login.microsoftonline.com/tenant/authorize"
+
+        def locator(self, selector):
+            return Locator(selector)
+
+        def wait_for_timeout(self, _value):
+            return None
+
+        def close(self):
+            return None
+
+    password_clicks: list[bool] = []
+    enter_presses: list[bool] = []
+    page = Page()
+    context = type("Context", (), {"request": Request(), "new_page": lambda self: page})()
+
+    assert ensure_canvas_session(
+        context,
+        "https://canvas.test",
+        microsoft_email="student@example.test",
+        microsoft_password="password",
+        renewal_wait_ms=0,
+    ) == {"id": 42}
+    assert password_clicks == [True]
+    assert enter_presses == [True]
 
 
 def test_microsoft_rejected_credentials_are_reported_without_page_text() -> None:

@@ -519,7 +519,72 @@ def _complete_microsoft_login(page, email: str, password: str) -> None:
             "SESSION_EXPIRED", "Microsoft sign-in origin changed", exit_code=2
         )
     password_input.fill(password)
-    page.locator("#idSIButton9").evaluate("el => el.click()")
+    submit = page.locator(MICROSOFT_SUBMIT_SELECTOR).first
+    submit.wait_for(state="visible", timeout=20_000)
+    submitted_from = str(getattr(page, "url", ""))
+
+    # A DOM el.click() is not a real browser interaction and Microsoft's current
+    # sign-in page can ignore it without raising an error. Use Playwright's trusted
+    # pointer action, verify that the password form actually starts leaving, and
+    # fall back to the form's Enter submission once when the click is swallowed.
+    try:
+        submit.click(timeout=10_000)
+    except Exception:
+        pass
+    if _wait_for_microsoft_password_submission(
+        page, password_input, submit, submitted_from
+    ):
+        return
+
+    try:
+        password_input.press("Enter")
+    except Exception:
+        pass
+    if _wait_for_microsoft_password_submission(
+        page, password_input, submit, submitted_from
+    ):
+        return
+
+    issue = _microsoft_sign_in_issue(page)
+    if issue is not None:
+        raise issue
+    raise CanvasError(
+        "MICROSOFT_SUBMIT_STALLED",
+        "Microsoft sign-in did not respond to the password submission",
+        exit_code=2,
+    )
+
+
+def _wait_for_microsoft_password_submission(
+    page,
+    password_input,
+    submit,
+    submitted_from: str,
+    *,
+    attempts: int = 10,
+    interval_ms: int = 500,
+) -> bool:
+    """Confirm that a password submission started without reading page secrets."""
+
+    for _attempt in range(attempts):
+        if interval_ms:
+            page.wait_for_timeout(interval_ms)
+        issue = _microsoft_sign_in_issue(page)
+        if issue is not None:
+            raise issue
+        try:
+            current_url = str(getattr(page, "url", ""))
+            if current_url != submitted_from or not _trusted_microsoft_login_url(current_url):
+                return True
+            if password_input.count() == 0 or not password_input.is_visible():
+                return True
+            if submit.count() == 0 or not submit.is_visible() or not submit.is_enabled():
+                return True
+        except Exception:
+            # A navigation can detach the old locators between checks; that itself
+            # means the submit action made progress.
+            return True
+    return False
 
 
 def _microsoft_sign_in_issue(page) -> CanvasError | None:
