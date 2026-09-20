@@ -141,7 +141,7 @@ class LiveSourceProvider:
             try:
                 return self._canvas_session_attempt(
                     operation,
-                    headless=attempt == 0,
+                    headless=True,
                     renew=attempt == 1,
                 )
             except CanvasError as exc:

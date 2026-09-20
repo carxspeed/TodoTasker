@@ -302,7 +302,7 @@ def test_canvas_session_retries_one_transient_failure(tmp_path: Path, monkeypatc
     assert provider._run_canvas_session(lambda _context: "ok") == "ok"
     assert attempts == [
         {"headless": True, "renew": False},
-        {"headless": False, "renew": True},
+        {"headless": True, "renew": True},
     ]
 
 
