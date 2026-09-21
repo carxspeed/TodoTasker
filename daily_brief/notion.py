@@ -29,6 +29,31 @@ DAILY_PLAN_STATUSES = ["To do", "Done"]
 MASTER_TASK_TITLE = "Tasks"
 MASTER_AREAS = ["Work", "School", "Connections", "Misc"]
 MASTER_SOURCE_TYPES = ["Canvas", "Notion"]
+MASTER_STATUSES = [
+    "To do",
+    "In progress",
+    "Needs remake",
+    "Submitted",
+    "Waiting",
+    "Verify",
+    "Done",
+]
+DISPLAY_TYPES = [
+    "Test / Quiz",
+    "Project",
+    "Lab",
+    "Essay / Writing",
+    "Homework",
+    "Event",
+    "Personal task",
+]
+NON_ACTIONABLE_STATUSES = {"Submitted", "Waiting", "Done"}
+PROTECTED_STALE_STATUSES = {"Needs remake", "Submitted", "Waiting"}
+ASSESSMENT_TYPE_RE = re.compile(
+    r"\b(?:quiz(?:zes)?|test|exam(?:ination)?|assessment|mcq|multiple[ -]choice|"
+    r"frq|free[ -]response|timed[ -](?:write|writing|essay)|midterm|final)\b",
+    re.IGNORECASE,
+)
 
 
 class NotionError(RuntimeError):
@@ -70,6 +95,7 @@ class MasterTaskSyncResult:
     rows_created: int = 0
     rows_updated: int = 0
     rows_unchanged: int = 0
+    rows_archived: int = 0
     task_urls: dict[str, str] = field(default_factory=dict)
 
 
@@ -202,6 +228,7 @@ def master_task_schema() -> dict[str, Any]:
     return {
         "Task": {"title": {}},
         "Done": {"checkbox": {}},
+        "Status": options(MASTER_STATUSES),
         "Area": options(MASTER_AREAS),
         "Course": {"rich_text": {}},
         "Source type": options(MASTER_SOURCE_TYPES),
@@ -211,6 +238,7 @@ def master_task_schema() -> dict[str, Any]:
         "Priority": options(SCHOOL_PRIORITIES),
         "Effort": options(EFFORTS),
         "Kind": {"rich_text": {}},
+        "Display type": options(DISPLAY_TYPES),
         "Next step": {"rich_text": {}},
         "Notes / progress": {"rich_text": {}},
         "Instructions": {"rich_text": {}},
@@ -218,11 +246,50 @@ def master_task_schema() -> dict[str, Any]:
         "Focus rank": {"number": {"format": "number"}},
         "Focus reason": {"rich_text": {}},
         "Needs verification": {"checkbox": {}},
+        "Locked": {"checkbox": {}},
+        "Unlock at": {"date": {}},
+        "Archived": {"checkbox": {}},
         "Cadence": options(CADENCES),
         "Last touched": {"date": {}},
         "Task type": options(TYPES),
         "Sync hash": {"rich_text": {}},
+        "Open": {
+            "formula": {
+                "expression": 'if(empty(prop("Source URL")), "", link("Open ↗", prop("Source URL")))'
+            }
+        },
+        "Sort order": {
+            "formula": {
+                "expression": (
+                    'ifs(prop("Status") == "In progress", 0, '
+                    'prop("Status") == "Needs remake", 1, '
+                    'prop("Locked"), 70, '
+                    'prop("Status") == "Verify", 60, '
+                    'prop("Priority") == "MUST", 10, '
+                    'prop("Priority") == "SMART", 20, '
+                    'prop("Priority") == "MAY", 30, 40)'
+                )
+            }
+        },
     }
+
+
+def display_task_type(name: str, kind: str = "", *, source_type: str = "Canvas") -> str:
+    """Turn low-level source kinds into labels that help someone plan."""
+    if source_type != "Canvas":
+        return "Personal task"
+    lowered = f"{name} {kind}".casefold()
+    if ASSESSMENT_TYPE_RE.search(lowered):
+        return "Test / Quiz"
+    if "project" in lowered or "presentation" in lowered:
+        return "Project"
+    if re.search(r"\blab(?:oratory)?\b", lowered):
+        return "Lab"
+    if re.search(r"\b(?:essay|journal|writing|write-up|response)\b", lowered):
+        return "Essay / Writing"
+    if kind == "calendar_event":
+        return "Event"
+    return "Homework"
 
 
 def _bounded(value: str, limit: int) -> str:
@@ -321,8 +388,10 @@ def canvas_master_task_fields(
     assignment: Any, details: dict[str, str] | None = None
 ) -> dict[str, Any]:
     school = school_assignment_fields(assignment, details)
+    status = "Verify" if school["Status"] == "Verify" else "To do"
     source_fields = {
         "Task": school["Name"],
+        "Status": status,
         "Area": "School",
         "Course": _bounded(assignment.course, 200),
         "Source type": "Canvas",
@@ -332,9 +401,13 @@ def canvas_master_task_fields(
         "Priority": school["Priority"],
         "Effort": school["Effort"],
         "Kind": assignment.kind,
+        "Display type": display_task_type(assignment.name, assignment.kind),
         "Next step": school["Next step"],
         "Instructions": school["Instructions"],
         "Needs verification": school["Status"] == "Verify",
+        "Locked": assignment.locked_for_user,
+        "Unlock at": assignment.unlock_at.isoformat() if assignment.unlock_at else None,
+        "Archived": False,
     }
     source_fields["Sync hash"] = hashlib.sha256(
         json.dumps(source_fields, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -349,6 +422,7 @@ def notion_master_task_fields(
     area = item.area if item.area in MASTER_AREAS else "Misc"
     source_fields = {
         "Task": _bounded(item.name, 500),
+        "Status": item.status,
         "Area": area,
         "Course": "",
         "Source type": "Notion",
@@ -358,11 +432,17 @@ def notion_master_task_fields(
         "Priority": details.get("Priority") or "Later",
         "Effort": details.get("Effort") or item.effort,
         "Kind": item.type or "Task",
+        "Display type": display_task_type(
+            item.name, item.type or "Task", source_type="Notion"
+        ),
         # Keep this field user-owned. Generated guidance is presentation data and
         # must not become the input to the next planning run.
         "Next step": clean_notion_next_step(item.next_step),
         "Instructions": "",
         "Needs verification": False,
+        "Locked": False,
+        "Unlock at": None,
+        "Archived": False,
         "Cadence": item.cadence,
         "Last touched": item.last_touched,
         "Task type": item.type,
@@ -417,6 +497,7 @@ def master_task_properties(fields: dict[str, Any]) -> dict[str, Any]:
     builders = {
         "Task": title_property,
         "Done": lambda value: {"checkbox": bool(value)},
+        "Status": select_property,
         "Area": select_property,
         "Course": rich_text_property,
         "Source type": select_property,
@@ -426,6 +507,7 @@ def master_task_properties(fields: dict[str, Any]) -> dict[str, Any]:
         "Priority": select_property,
         "Effort": select_property,
         "Kind": rich_text_property,
+        "Display type": select_property,
         "Next step": rich_text_property,
         "Notes / progress": rich_text_property,
         "Instructions": rich_text_property,
@@ -433,6 +515,9 @@ def master_task_properties(fields: dict[str, Any]) -> dict[str, Any]:
         "Focus rank": lambda value: {"number": value},
         "Focus reason": rich_text_property,
         "Needs verification": lambda value: {"checkbox": bool(value)},
+        "Locked": lambda value: {"checkbox": bool(value)},
+        "Unlock at": date_property,
+        "Archived": lambda value: {"checkbox": bool(value)},
         "Cadence": select_property,
         "Last touched": date_property,
         "Task type": select_property,
@@ -1115,8 +1200,9 @@ class NotionSchoolBoard:
         details_by_key: dict[str, dict[str, str]] | None = None,
         user_context_by_key: dict[str, dict[str, Any]] | None = None,
         excluded_course_ids: Iterable[int] = (),
+        authoritative_canvas: bool = False,
     ) -> MasterTaskSyncResult:
-        """Upsert every active source row without overwriting Done or Notes."""
+        """Upsert active rows while preserving user status, completion, and notes."""
         root = self.client.retrieve_page(self.parent_page_id)
         dashboard_url = str(root.get("url") or f"https://www.notion.so/{self.parent_page_id}")
         database_id = self._master_task_database()
@@ -1133,7 +1219,7 @@ class NotionSchoolBoard:
         else:
             self.client.ensure_database_properties(database_id, master_task_schema())
 
-        existing: dict[str, tuple[str, str, str]] = {}
+        existing: dict[str, tuple[str, str, str, dict[str, Any]]] = {}
         for page in self.client.query_database_pages(database_id):
             source_id = _property_rich_text(page, "Source ID")
             page_id = str(page.get("id") or "")
@@ -1145,6 +1231,7 @@ class NotionSchoolBoard:
                     page_id,
                     _property_rich_text(page, "Sync hash"),
                     str(page.get("url") or ""),
+                    page,
                 )
 
         details = details_by_key or {}
@@ -1177,14 +1264,31 @@ class NotionSchoolBoard:
             url=dashboard_url,
             database_created=created_database,
         )
+        current_source_ids = {source_id for source_id, *_rest in rows}
         for source_id, fields, initial_done, initial_notes in rows:
             current = existing.get(source_id)
-            if current and current[1] == fields["Sync hash"]:
+            if (
+                current
+                and current[1] == fields["Sync hash"]
+                and _property_select(current[3], "Status")
+                and not _property_checkbox(current[3], "Archived")
+            ):
                 result.rows_unchanged += 1
                 result.task_urls[source_id] = current[2]
                 continue
             if current:
-                response = self.client.update_master_task(current[0], fields)
+                current_status = _property_select(current[3], "Status")
+                if not current_status:
+                    current_status = (
+                        "Done"
+                        if _property_checkbox(current[3], "Done")
+                        else "Verify"
+                        if _property_checkbox(current[3], "Needs verification")
+                        else "To do"
+                    )
+                update_fields = {name: value for name, value in fields.items() if name != "Status"}
+                update_fields["Status"] = current_status
+                response = self.client.update_master_task(current[0], update_fields)
                 result.rows_updated += 1
                 result.task_urls[source_id] = str(response.get("url") or current[2])
             else:
@@ -1193,11 +1297,30 @@ class NotionSchoolBoard:
                     {
                         **fields,
                         "Done": initial_done,
+                        "Status": "Done" if initial_done else fields["Status"],
                         "Notes / progress": initial_notes,
                     },
                 )
                 result.rows_created += 1
                 result.task_urls[source_id] = str(response.get("url") or "")
+
+        for source_id, (page_id, _sync_hash, _url, page) in existing.items():
+            title = _property_title(page, "Task").strip()
+            status = _property_select(page, "Status") or (
+                "Done" if _property_checkbox(page, "Done") else "To do"
+            )
+            source_type = _property_select(page, "Source type")
+            should_archive = title.casefold().startswith("example:")
+            if (
+                authoritative_canvas
+                and source_type == "Canvas"
+                and source_id not in current_source_ids
+                and status not in PROTECTED_STALE_STATUSES
+            ):
+                should_archive = True
+            if should_archive and not _property_checkbox(page, "Archived"):
+                self.client.update_master_task(page_id, {"Archived": True})
+                result.rows_archived += 1
         return result
 
     def get_master_task_context(self) -> dict[str, dict[str, Any]]:
@@ -1208,8 +1331,13 @@ class NotionSchoolBoard:
         for page in self.client.query_database_pages(database_id):
             source_id = _property_rich_text(page, "Source ID")
             if source_id:
+                status = _property_select(page, "Status") or (
+                    "Done" if _property_checkbox(page, "Done") else "To do"
+                )
                 context[source_id] = {
-                    "done": _property_checkbox(page, "Done"),
+                    "done": _property_checkbox(page, "Done") or status == "Done",
+                    "status": status,
+                    "archived": _property_checkbox(page, "Archived"),
                     "notes": _bounded(
                         _property_rich_text(page, "Notes / progress"), 1000
                     ),
@@ -1225,9 +1353,13 @@ class NotionSchoolBoard:
         items: list[NotionWorkItem] = []
         warnings: list[str] = []
         for page in self.client.query_database_pages(database_id):
-            if _property_select(page, "Source type") == "Canvas":
+            source_type = _property_select(page, "Source type")
+            status = _property_select(page, "Status") or (
+                "Done" if _property_checkbox(page, "Done") else "To do"
+            )
+            if _property_checkbox(page, "Archived") or status in NON_ACTIONABLE_STATUSES:
                 continue
-            if _property_checkbox(page, "Done"):
+            if source_type == "Canvas" and status != "Needs remake":
                 continue
             page_id = str(page.get("id") or "").replace("-", "")
             name = _bounded(_property_title(page, "Task"), 200)
@@ -1236,8 +1368,10 @@ class NotionSchoolBoard:
                 continue
             source_id = _property_rich_text(page, "Source ID") or f"notion:{page_id}"
             area = _property_select(page, "Area") or "Misc"
-            item_type = _property_select(page, "Task type") or _property_rich_text(
-                page, "Kind"
+            item_type = (
+                _property_select(page, "Display type")
+                or _property_select(page, "Task type")
+                or _property_rich_text(page, "Kind")
             )
             effort = _property_select(page, "Effort") or None
             if effort not in {*EFFORTS, None}:
@@ -1275,6 +1409,7 @@ class NotionSchoolBoard:
                     ),
                     deadline=deadline,
                     effort=effort,
+                    status=status,
                 )
             )
         return WorkSnapshot(items=items, warnings=warnings)

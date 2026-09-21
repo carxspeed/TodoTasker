@@ -12,6 +12,17 @@ class Contract(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
 
+TaskStatus = Literal[
+    "To do",
+    "In progress",
+    "Needs remake",
+    "Submitted",
+    "Waiting",
+    "Verify",
+    "Done",
+]
+
+
 class CanvasAssignment(Contract):
     key: str
     source_key: str
@@ -31,6 +42,7 @@ class CanvasAssignment(Contract):
     needs_confirmation: bool = False
     locked_for_user: bool = False
     unlock_at: AwareDatetime | None = None
+    manual_status: TaskStatus | None = None
 
 
 class CanvasEvent(Contract):
@@ -114,6 +126,7 @@ class NotionWorkItem(Contract):
     next_step: str = Field(default="", max_length=1000)
     deadline: date | None = None
     effort: Literal["S", "M", "L"] | None = None
+    status: TaskStatus = "To do"
 
 
 class NotionSnapshot(Contract):
@@ -140,6 +153,7 @@ class NotionMasterTask(Contract):
     deadline: date | None = None
     priority: Literal["MUST", "SMART", "MAY", "Later", "Verify"] = "Later"
     effort: Literal["S", "M", "L"] | None = None
+    status: TaskStatus = "To do"
     kind: str = ""
     next_step: str = Field(default="", max_length=1000)
     notes: str = Field(default="", max_length=1000)

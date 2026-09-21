@@ -455,21 +455,34 @@ class DailyBriefOrchestrator:
                                     update={
                                         "user_notes": master_context.get(item.key, {}).get(
                                             "notes", ""
-                                        )
+                                        ),
+                                        "manual_status": master_context.get(item.key, {}).get(
+                                            "status"
+                                        ),
                                     }
                                 )
                                 for item in canvas.assignments
                                 if not master_context.get(item.key, {}).get("done", False)
+                                and not master_context.get(item.key, {}).get("archived", False)
+                                and master_context.get(item.key, {}).get("status")
+                                not in {"Submitted", "Waiting"}
                             ]
                         }
                     )
                 if notion is not None:
+                    canvas_keys = {
+                        item.key for item in canvas.assignments
+                    } if canvas is not None else set()
                     notion = notion.model_copy(
                         update={
                             "items": [
                                 item
                                 for item in notion.items
                                 if not master_context.get(item.key, {}).get("done", False)
+                                and not master_context.get(item.key, {}).get("archived", False)
+                                and master_context.get(item.key, {}).get("status")
+                                not in {"Submitted", "Waiting"}
+                                and item.key not in canvas_keys
                             ]
                         }
                     )
@@ -848,6 +861,13 @@ class DailyBriefOrchestrator:
                         bundle.notion.items if bundle.notion is not None else [],
                         details_by_key=details_by_key,
                         excluded_course_ids=self.settings.canvas_excluded_course_ids,
+                        authoritative_canvas=(
+                            bundle.statuses.get("canvas") == "live"
+                            and bundle.canvas is not None
+                            and bundle.canvas.source_status.planner_items == "ok"
+                            and bundle.canvas.source_status.missing_submissions == "ok"
+                            and bundle.canvas.source_status.courses == "ok"
+                        ),
                     )
                     focus_aliases = _assessment_focus_aliases(
                         classification, bundle.canvas

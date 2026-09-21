@@ -73,7 +73,7 @@ def _classify_canvas(
         and delta < timedelta(0)
         and bool(ASSESSMENT_RE.search(item.name))
     )
-    urgent_verify = (
+    urgent_verify = item.manual_status != "Needs remake" and (
         past_assessment
         or (
             item.submission_status == "unknown"
@@ -81,7 +81,9 @@ def _classify_canvas(
             and delta <= timedelta(hours=24)
         )
     )
-    if item.submission_status == "unknown":
+    if item.manual_status == "Needs remake":
+        tier = "must"
+    elif item.submission_status == "unknown":
         tier = "smart"
     else:
         tier = _deadline_tier(delta, explicit_large=effort_source == "override" and effort == "L")
@@ -138,6 +140,10 @@ def _classify_notion(
     if item.deadline is None:
         deadline_tier = "may"
     tier = max((cadence_tier, deadline_tier), key=TIER_SCORE.get)
+    if item.status == "Needs remake":
+        tier = "must"
+    elif item.status == "In progress" and TIER_SCORE[tier] < TIER_SCORE["smart"]:
+        tier = "smart"
     return ClassifiedItem(
         key=item.key,
         source="notion",
@@ -382,6 +388,7 @@ def classify(
             raw.due_at is not None
             and raw.due_at <= as_of
             and ASSESSMENT_RE.search(raw.name)
+            and raw.manual_status != "Needs remake"
         ):
             continue
         item, urgent_verify = _classify_canvas(raw, as_of, overrides)

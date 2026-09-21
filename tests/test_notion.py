@@ -24,6 +24,7 @@ from daily_brief.notion import (
     school_database_schema,
     school_properties,
     compact_instruction_summary,
+    display_task_type,
     select_property,
     summarize_master_migration,
     title_property,
@@ -84,6 +85,9 @@ def test_property_payload_shapes_are_not_bare_strings() -> None:
     assert daily_plan_schema()["Rank"] == {"number": {"format": "number"}}
     assert daily_plan_properties({"Time (hours)": 1.5}) == {"Time (hours)": {"number": 1.5}}
     assert master_task_schema()["Done"] == {"checkbox": {}}
+    assert master_task_schema()["Status"]["select"]["options"]
+    assert master_task_schema()["Open"]["formula"]["expression"].startswith("if(")
+    assert master_task_schema()["Sort order"]["formula"]["expression"].startswith("ifs(")
     assert master_task_schema()["Focus rank"] == {"number": {"format": "number"}}
     assert master_task_properties(
         {
@@ -100,6 +104,14 @@ def test_property_payload_shapes_are_not_bare_strings() -> None:
         "Focus date": {"date": {"start": "2026-09-17"}},
         "Focus rank": {"number": 1},
     }
+
+
+def test_display_type_is_human_meaningful_instead_of_raw_canvas_kind() -> None:
+    assert display_task_type("Unit 2 MCQ", "assignment") == "Test / Quiz"
+    assert display_task_type("Millions Lab", "assignment") == "Lab"
+    assert display_task_type("Federalist essay", "assignment") == "Essay / Writing"
+    assert display_task_type("Teach Me Project", "assignment") == "Project"
+    assert display_task_type("Call advisor", "Task", source_type="Notion") == "Personal task"
 
 
 def test_school_assignment_payload_includes_source_id_and_safe_next_step() -> None:
@@ -303,6 +315,81 @@ def test_master_migration_preserves_legacy_done_and_notes_on_create() -> None:
     assert fields["Notes / progress"] == "Submitted to the teacher in person."
 
 
+def test_master_sync_preserves_manual_status_and_archives_examples() -> None:
+    assignment = load_fixture("fixtures/sample_todo.json").assignments[0]
+    fake = FakeSchoolClient()
+    fake.children = [
+        {"type": "child_database", "id": "master", "child_database": {"title": "Tasks"}}
+    ]
+    fake.query_database_pages = lambda _database_id: [
+        {
+            "id": "current",
+            "url": "https://notion.test/current",
+            "properties": {
+                "Task": text_prop("title", assignment.name),
+                "Source ID": text_prop("rich_text", assignment.key),
+                "Source type": select_prop("Canvas"),
+                "Status": select_prop("Submitted"),
+                "Archived": {"type": "checkbox", "checkbox": False},
+                "Sync hash": text_prop("rich_text", "old"),
+            },
+        },
+        {
+            "id": "example",
+            "properties": {
+                "Task": text_prop("title", "Example: Review class notes"),
+                "Source ID": text_prop("rich_text", "notion:example"),
+                "Source type": select_prop("Notion"),
+                "Status": select_prop("To do"),
+                "Archived": {"type": "checkbox", "checkbox": False},
+                "Sync hash": text_prop("rich_text", "example"),
+            },
+        },
+    ]
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    result = board.sync_master_tasks([assignment], [])
+
+    assert fake.updated_rows[0][0] == "current"
+    assert fake.updated_rows[0][1]["Status"] == "Submitted"
+    assert fake.updated_rows[1] == ("example", {"Archived": True})
+    assert result.rows_archived == 1
+
+
+def test_stale_canvas_rows_retire_only_after_authoritative_refresh() -> None:
+    def stale_page(status="To do"):
+        return {
+            "id": "stale",
+            "properties": {
+                "Task": text_prop("title", "Old assignment"),
+                "Source ID": text_prop("rich_text", "assignment:old"),
+                "Source type": select_prop("Canvas"),
+                "Status": select_prop(status),
+                "Archived": {"type": "checkbox", "checkbox": False},
+                "Sync hash": text_prop("rich_text", "old"),
+            },
+        }
+
+    fake = FakeSchoolClient()
+    fake.children = [
+        {"type": "child_database", "id": "master", "child_database": {"title": "Tasks"}}
+    ]
+    fake.query_database_pages = lambda _database_id: [stale_page()]
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    board.sync_master_tasks([], [], authoritative_canvas=False)
+    assert fake.updated_rows == []
+
+    result = board.sync_master_tasks([], [], authoritative_canvas=True)
+    assert fake.updated_rows == [("stale", {"Archived": True})]
+    assert result.rows_archived == 1
+
+    fake.updated_rows.clear()
+    fake.query_database_pages = lambda _database_id: [stale_page("Needs remake")]
+    board.sync_master_tasks([], [], authoritative_canvas=True)
+    assert fake.updated_rows == []
+
+
 def test_master_migration_summary_reports_duplicates_and_exclusions() -> None:
     assignments = load_fixture("fixtures/sample_todo.json").assignments
     included = assignments[0]
@@ -349,6 +436,8 @@ def test_master_context_reads_done_notes_and_page_url() -> None:
     assert board.get_master_task_context() == {
         "assignment:1": {
             "done": True,
+            "status": "Done",
+            "archived": False,
             "notes": "Submitted in person.",
             "url": "https://notion.test/row",
         }
@@ -400,6 +489,39 @@ def test_master_work_uses_the_master_database_and_adopts_manual_rows() -> None:
     assert item.area == "Connections"
     assert item.deadline == date(2026, 9, 18)
     assert item.next_step == "Send a short follow-up."
+
+
+def test_canvas_row_marked_needs_remake_reenters_the_work_feed() -> None:
+    fake = FakeSchoolClient()
+    fake.children = [
+        {"type": "child_database", "id": "master", "child_database": {"title": "Tasks"}}
+    ]
+    fake.query_database_pages = lambda _database_id: [
+        {
+            "id": "retake",
+            "url": "https://notion.test/retake",
+            "properties": {
+                "Task": text_prop("title", "Unit 2 Test retake"),
+                "Source type": select_prop("Canvas"),
+                "Source ID": text_prop("rich_text", "assignment:retake"),
+                "Status": select_prop("Needs remake"),
+                "Archived": {"type": "checkbox", "checkbox": False},
+                "Area": select_prop("School"),
+                "Display type": select_prop("Test / Quiz"),
+                "Effort": select_prop("M"),
+                "Due": date_prop("2026-09-25"),
+                "Last touched": date_prop(None),
+                "Next step": text_prop("rich_text", "Ask the teacher to schedule the retake."),
+            },
+        }
+    ]
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    item = board.get_master_work().items[0]
+
+    assert item.key == "assignment:retake"
+    assert item.status == "Needs remake"
+    assert item.type == "Test / Quiz"
 
 
 def test_master_focus_marks_three_or_fewer_and_clears_old_focus_without_archiving() -> None:

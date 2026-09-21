@@ -198,6 +198,21 @@ def test_past_due_quiz_is_omitted_even_when_canvas_says_unsubmitted() -> None:
     assert not result.may
 
 
+def test_past_assessment_marked_needs_remake_is_actionable_again() -> None:
+    retake = canvas_item("assignment:10", due_hours=-72).model_copy(
+        update={
+            "name": "Unit 2 Test",
+            "kind": "quiz",
+            "manual_status": "Needs remake",
+        }
+    )
+
+    result = run([retake])
+
+    assert [item.key for item in result.must] == [retake.key]
+    assert result.verify == []
+
+
 def test_past_due_nonassessment_can_still_be_actionable() -> None:
     worksheet = canvas_item("assignment:10", due_hours=-48).model_copy(
         update={"name": "Chapter worksheet"}
