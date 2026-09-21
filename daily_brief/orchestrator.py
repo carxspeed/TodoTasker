@@ -42,10 +42,11 @@ from .models import (
     SeenAssignment,
 )
 from .notion import NotionSchoolBoard, NotionTaskStore
+from .notification import build_daily_notification
 from .render import deterministic_guidance, render_brief
 from .runtime import SourceCache, alert_incident, normalized_hash, resolve_incident_dir
 from .state import StateStore
-from .telegram import TelegramClient, build_summary
+from .telegram import TelegramClient, render_notification
 from .timeutils import utc_now
 
 
@@ -832,9 +833,19 @@ class DailyBriefOrchestrator:
                 self.state_store.save(state)
             except Exception:
                 notion_url = None
-        summary = build_summary(text, notion_url, local_path=brief_path)
+        notification = build_daily_notification(
+            classification,
+            guidance=guidance,
+            canvas=bundle.canvas,
+            warnings=warnings,
+        )
+        summary = render_notification(notification)
         payload_hash = normalized_hash(
-            {"text": summary.text, "notion_url": notion_url, "keyboard": bool(notion_url)}
+            {
+                "text": summary.text,
+                "notion_url": notion_url,
+                "primary_url": notification.primary.url if notification.primary else None,
+            }
         )
         status = "failed"
         success = False
@@ -844,19 +855,16 @@ class DailyBriefOrchestrator:
                 status = "skipped"
                 success = True
             elif delivery.telegram_message_id:
-                _, result = self.telegram.edit_brief(
+                _, result = self.telegram.edit_notification(
                     delivery.telegram_message_id,
-                    text,
+                    notification,
                     notion_url,
-                    local_path=brief_path,
                 )
                 status = "edited" if result.success else "failed"
                 success = result.success
                 uncertain = result.uncertain
             else:
-                _, result = self.telegram.send_brief(
-                    text, notion_url, local_path=brief_path
-                )
+                _, result = self.telegram.send_notification(notification, notion_url)
                 status = "sent" if result.success else "failed"
                 success = result.success
                 uncertain = result.uncertain

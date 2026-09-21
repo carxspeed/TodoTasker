@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 import requests
 
+from .models import DailyNotification, NotificationTask
+
 
 SUMMARY_LIMIT = 3900
+NOTIFICATION_LIMIT = 900
 
 
 @dataclass(frozen=True)
@@ -25,6 +30,89 @@ class TelegramResult:
     message_id: int | None = None
     error: str | None = None
     uncertain: bool = False
+
+
+def _short(value: str, limit: int) -> str:
+    text = " ".join(value.split())
+    return text if len(text) <= limit else text[: limit - 3].rstrip() + "..."
+
+
+def _format_effort(value: float) -> str:
+    return f"{value:.1f}".rstrip("0").rstrip(".") + "h"
+
+
+def _format_due(task: NotificationTask, target_date: date) -> str:
+    if task.due_at is None:
+        return ""
+    due = task.due_at
+    clock = f"{due.strftime('%I').lstrip('0')}:{due.strftime('%M %p')}"
+    if due.date() < target_date:
+        return f"Overdue since {due.strftime('%b')} {due.day}"
+    if due.date() == target_date:
+        return f"Due today {clock}"
+    if (due.date() - target_date).days == 1:
+        return f"Due tomorrow {clock}"
+    return f"Due {due.strftime('%a %b')} {due.day}, {clock}"
+
+
+def render_notification(notification: DailyNotification) -> TelegramSummary:
+    """Render one small HTML card instead of copying the full daily report."""
+
+    day = notification.target_date.strftime("%A")
+    lines = [f"☀️ <b>{html.escape(day)}'s plan</b>"]
+    primary = notification.primary
+    if primary is None:
+        lines.extend(["", "✅ No focus tasks selected."])
+    else:
+        title = _short(primary.name, 90)
+        if primary.course:
+            title = f"{_short(primary.course, 35)} · {title}"
+        lines.extend(
+            [
+                "",
+                "🎯 <b>Start here</b>",
+                f"<b>{html.escape(title)}</b>",
+                html.escape(_short(primary.next_step, 160)),
+            ]
+        )
+        details = [value for value in (_format_due(primary, notification.target_date), _format_effort(primary.effort_hours)) if value]
+        if details:
+            lines.append(" · ".join(details))
+    if notification.followups:
+        lines.extend(["", "<b>Then</b>"])
+        for index, task in enumerate(notification.followups, start=2):
+            title = _short(task.name, 75)
+            if task.course:
+                title = f"{_short(task.course, 28)} · {title}"
+            lines.append(
+                f"{index}. {html.escape(title)} · {_format_effort(task.effort_hours)}"
+            )
+    if notification.reminders:
+        lines.append("")
+        for reminder in notification.reminders:
+            title = reminder.title
+            if reminder.course:
+                title = f"{reminder.course} · {title}"
+            lines.append(f"📝 <b>Reminder:</b> {html.escape(_short(title, 100))}")
+    footer: list[str] = []
+    if notification.backlog_count:
+        footer.append(
+            f"{notification.backlog_count} other task"
+            f"{'s' if notification.backlog_count != 1 else ''} remain in Notion."
+        )
+    if notification.verify_count:
+        footer.append(
+            f"🔎 {notification.verify_count} Canvas task"
+            f"{'s' if notification.verify_count != 1 else ''} need status confirmation."
+        )
+    if footer:
+        lines.extend(["", *footer])
+    if notification.notice:
+        lines.extend(["", f"⚠️ {html.escape(notification.notice)}"])
+    text = "\n".join(lines)
+    if len(text) > NOTIFICATION_LIMIT:
+        raise ValueError("compact Telegram notification exceeds its limit")
+    return TelegramSummary(text)
 
 
 def _cap_task_title(line: str) -> str:
@@ -123,6 +211,21 @@ class TelegramClient:
             "inline_keyboard": [[{"text": "Open task tables", "url": notion_url}]]
         }
 
+    @staticmethod
+    def _notification_keyboard(
+        notification: DailyNotification, notion_url: str | None
+    ) -> dict[str, Any] | None:
+        buttons: list[dict[str, str]] = []
+        if notification.primary and notification.primary.url:
+            buttons.append(
+                {"text": "Open main task", "url": notification.primary.url}
+            )
+        if notion_url and (
+            not notification.primary or notion_url != notification.primary.url
+        ):
+            buttons.append({"text": "Today in Notion", "url": notion_url})
+        return {"inline_keyboard": [buttons]} if buttons else None
+
     def _post(self, method: str, payload: dict[str, Any]) -> TelegramResult:
         try:
             response = self.session.post(
@@ -153,6 +256,21 @@ class TelegramClient:
             payload["reply_markup"] = keyboard
         return summary, self._post("sendMessage", payload)
 
+    def send_notification(
+        self, notification: DailyNotification, notion_url: str | None
+    ) -> tuple[TelegramSummary, TelegramResult]:
+        summary = render_notification(notification)
+        payload: dict[str, Any] = {
+            "chat_id": self.chat_id,
+            "text": summary.text,
+            "parse_mode": "HTML",
+            "link_preview_options": {"is_disabled": True},
+        }
+        keyboard = self._notification_keyboard(notification, notion_url)
+        if keyboard:
+            payload["reply_markup"] = keyboard
+        return summary, self._post("sendMessage", payload)
+
     def edit_brief(
         self,
         message_id: int,
@@ -168,6 +286,25 @@ class TelegramClient:
             "text": summary.text,
         }
         keyboard = self._keyboard(notion_url)
+        if keyboard:
+            payload["reply_markup"] = keyboard
+        return summary, self._post("editMessageText", payload)
+
+    def edit_notification(
+        self,
+        message_id: int,
+        notification: DailyNotification,
+        notion_url: str | None,
+    ) -> tuple[TelegramSummary, TelegramResult]:
+        summary = render_notification(notification)
+        payload: dict[str, Any] = {
+            "chat_id": self.chat_id,
+            "message_id": message_id,
+            "text": summary.text,
+            "parse_mode": "HTML",
+            "link_preview_options": {"is_disabled": True},
+        }
+        keyboard = self._notification_keyboard(notification, notion_url)
         if keyboard:
             payload["reply_markup"] = keyboard
         return summary, self._post("editMessageText", payload)

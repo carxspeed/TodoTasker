@@ -19,7 +19,7 @@ from daily_brief.notion import SchoolSyncResult
 from daily_brief.orchestrator import DailyBriefOrchestrator, LiveSourceProvider
 from daily_brief.orchestrator import _assessment_focus_aliases
 from daily_brief.state import StateStore
-from daily_brief.telegram import TelegramResult, build_summary
+from daily_brief.telegram import TelegramResult, render_notification
 
 
 TARGET = date(2026, 9, 2)
@@ -132,19 +132,19 @@ class Telegram:
         self.sent = 0
         self.edited = 0
 
-    def send_brief(self, text, notion_url, *, local_path):
+    def send_notification(self, notification, notion_url):
         self.sent += 1
-        return build_summary(text, notion_url, local_path=local_path), TelegramResult(True, 44)
+        return render_notification(notification), TelegramResult(True, 44)
 
-    def edit_brief(self, message_id, text, notion_url, *, local_path):
+    def edit_notification(self, message_id, notification, notion_url):
         self.edited += 1
-        return build_summary(text, notion_url, local_path=local_path), TelegramResult(True, message_id)
+        return render_notification(notification), TelegramResult(True, message_id)
 
 
 class UncertainTelegram(Telegram):
-    def send_brief(self, text, notion_url, *, local_path):
+    def send_notification(self, notification, notion_url):
         self.sent += 1
-        return build_summary(text, notion_url, local_path=local_path), TelegramResult(
+        return render_notification(notification), TelegramResult(
             False, error="transport", uncertain=True
         )
 

@@ -2,7 +2,14 @@ from pathlib import Path
 
 import requests
 
-from daily_brief.telegram import SUMMARY_LIMIT, TelegramClient, build_summary
+from daily_brief.models import DailyNotification, NotificationReminder, NotificationTask
+from daily_brief.telegram import (
+    NOTIFICATION_LIMIT,
+    SUMMARY_LIMIT,
+    TelegramClient,
+    build_summary,
+    render_notification,
+)
 
 
 class Response:
@@ -74,3 +81,66 @@ def test_edit_not_modified_is_success() -> None:
         session=Session(Response({"ok": False, "description": "Bad Request: message is not modified"}, 400)),
     ).edit_brief(9, "Header", None, local_path=Path("brief.md"))[1]
     assert result.success and result.message_id == 9
+
+
+def compact_notification() -> DailyNotification:
+    return DailyNotification(
+        target_date=__import__("datetime").date(2026, 9, 20),
+        primary=NotificationTask(
+            key="assignment:1",
+            name="Lab: Millions",
+            course="AP Physics",
+            next_step="Finish the calculations and upload the final page.",
+            effort_hours=0.75,
+            url="https://canvas.test/assignment/1",
+        ),
+        followups=[
+            NotificationTask(
+                key="assignment:2",
+                name="Calculus practice",
+                course="Calculus",
+                next_step="Complete the first problem.",
+                effort_hours=0.5,
+            )
+        ],
+        reminders=[
+            NotificationReminder(
+                title="Quiz 3", course="Calculus", date=__import__("datetime").date(2026, 9, 20)
+            )
+        ],
+        backlog_count=7,
+        verify_count=2,
+    )
+
+
+def test_compact_notification_is_phone_sized_and_escapes_html() -> None:
+    notification = compact_notification()
+    notification.primary.name = "Lab <Millions>"
+
+    rendered = render_notification(notification).text
+
+    assert len(rendered) <= NOTIFICATION_LIMIT
+    assert "🎯 <b>Start here</b>" in rendered
+    assert "Lab &lt;Millions&gt;" in rendered
+    assert "7 other tasks remain in Notion" in rendered
+    assert "2 Canvas tasks need status confirmation" in rendered
+    assert "Capacity" not in rendered
+
+
+def test_send_notification_uses_html_and_two_useful_buttons() -> None:
+    session = Session(Response({"ok": True, "result": {"message_id": 42}}))
+    client = TelegramClient("token", "chat", session=session)
+
+    _, result = client.send_notification(
+        compact_notification(), "https://notion.test/today"
+    )
+
+    assert result.success
+    payload = session.calls[0][1]["json"]
+    assert payload["parse_mode"] == "HTML"
+    assert payload["link_preview_options"] == {"is_disabled": True}
+    buttons = payload["reply_markup"]["inline_keyboard"][0]
+    assert [button["text"] for button in buttons] == [
+        "Open main task",
+        "Today in Notion",
+    ]
