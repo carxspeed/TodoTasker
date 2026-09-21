@@ -10,7 +10,7 @@ from datetime import date
 from typing import Any, Iterable
 
 from .http import HttpClient, HttpFailure
-from .models import NotionWorkItem
+from .models import DailyNotification, NotionWorkItem, NotificationTask
 
 
 NOTION_API = "https://api.notion.com/v1"
@@ -24,6 +24,7 @@ SCHOOL_STATUSES = ["To do", "Verify", "Done"]
 SCHOOL_PRIORITIES = ["MUST", "SMART", "MAY", "Later", "Verify"]
 SCHOOL_KINDS = ["assignment", "quiz", "discussion_topic", "sub_assignment"]
 DAILY_PLAN_TITLE = "Today's Focus"
+FOCUS_DASHBOARD_TITLE = "Today"
 DAILY_PLAN_STATUSES = ["To do", "Done"]
 MASTER_TASK_TITLE = "Tasks"
 MASTER_AREAS = ["Work", "School", "Connections", "Misc"]
@@ -79,6 +80,14 @@ class MasterFocusSyncResult:
     rows_focused: int = 0
     rows_cleared: int = 0
     missing_source_ids: tuple[str, ...] = ()
+
+
+@dataclass
+class FocusDashboardSyncResult:
+    page_id: str
+    url: str
+    page_created: bool = False
+    blocks_written: int = 0
 
 
 @dataclass(frozen=True)
@@ -760,6 +769,24 @@ class NotionClient:
             idempotent=False,
         )
 
+    def append_block_children(
+        self, block_id: str, children: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        return self._json(
+            "PATCH",
+            f"/blocks/{block_id.replace('-', '')}/children",
+            payload={"children": children},
+            idempotent=False,
+        )
+
+    def archive_block(self, block_id: str) -> dict[str, Any]:
+        return self._json(
+            "PATCH",
+            f"/blocks/{block_id.replace('-', '')}",
+            payload={"archived": True},
+            idempotent=True,
+        )
+
     def create_master_task(
         self, database_id: str, fields: dict[str, Any]
     ) -> dict[str, Any]:
@@ -893,6 +920,184 @@ class NotionSchoolBoard:
             self.client.list_block_children(self.parent_page_id)
         )
         return databases.get(MASTER_TASK_TITLE)
+
+    @staticmethod
+    def _child_pages(children: Iterable[dict[str, Any]]) -> dict[str, str]:
+        pages: dict[str, str] = {}
+        for child in children:
+            if child.get("type") != "child_page" or not child.get("id"):
+                continue
+            title = str((child.get("child_page") or {}).get("title") or "").strip()
+            if title and title not in pages:
+                pages[title] = str(child["id"])
+        return pages
+
+    @staticmethod
+    def _focus_task_block(task: NotificationTask, *, rank: int) -> dict[str, Any]:
+        icon = "🎯" if rank == 1 else ("2️⃣" if rank == 2 else "3️⃣")
+        link = {"url": task.url} if task.url else None
+        due = ""
+        if task.due_at is not None:
+            due = f"Due {task.due_at.strftime('%a %b')} {task.due_at.day}"
+        metadata = " · ".join(
+            value
+            for value in (
+                _bounded(task.course, 80),
+                due,
+                f"{task.effort_hours:g}h",
+            )
+            if value
+        )
+        rich_text: list[dict[str, Any]] = [
+            {
+                "type": "text",
+                "text": {"content": _bounded(task.name, 300), "link": link},
+                "annotations": {"bold": True},
+            }
+        ]
+        if metadata:
+            rich_text.append(
+                {"type": "text", "text": {"content": f"\n{metadata}"}}
+            )
+        rich_text.append(
+            {
+                "type": "text",
+                "text": {"content": f"\n{_bounded(task.next_step, 300)}"},
+            }
+        )
+        return {
+            "object": "block",
+            "type": "callout",
+            "callout": {
+                "rich_text": rich_text,
+                "icon": {"type": "emoji", "emoji": icon},
+                "color": "default",
+            },
+        }
+
+    def sync_focus_dashboard(
+        self,
+        notification: DailyNotification,
+        *,
+        full_tasks_url: str = "",
+    ) -> FocusDashboardSyncResult:
+        """Replace the generated, phone-first Today page with the current focus."""
+        root_children = self.client.list_block_children(self.parent_page_id)
+        page_id = self._child_pages(root_children).get(FOCUS_DASHBOARD_TITLE)
+        created = False
+        if page_id:
+            page = self.client.retrieve_page(page_id)
+        else:
+            page = self.client.create_child_page(
+                FOCUS_DASHBOARD_TITLE, parent_page_id=self.parent_page_id
+            )
+            page_id = str(page["id"])
+            created = True
+
+        for child in self.client.list_block_children(page_id):
+            block_id = str(child.get("id") or "")
+            if block_id:
+                self.client.archive_block(block_id)
+
+        tasks = [task for task in [notification.primary, *notification.followups] if task]
+        blocks: list[dict[str, Any]] = [
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": (
+                                    f"{notification.target_date.strftime('%A, %B')} "
+                                    f"{notification.target_date.day} · "
+                                    "Tap a task to mark it done or add progress notes."
+                                )
+                            },
+                            "annotations": {"color": "gray"},
+                        }
+                    ]
+                },
+            }
+        ]
+        if tasks:
+            blocks.extend(
+                self._focus_task_block(task, rank=rank)
+                for rank, task in enumerate(tasks, start=1)
+            )
+        else:
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "callout",
+                    "callout": {
+                        "rich_text": [
+                            {"type": "text", "text": {"content": "No focus tasks today."}}
+                        ],
+                        "icon": {"type": "emoji", "emoji": "✅"},
+                    },
+                }
+            )
+
+        for reminder in notification.reminders:
+            label = " · ".join(
+                value for value in (reminder.course, reminder.title) if value
+            )
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "callout",
+                    "callout": {
+                        "rich_text": [
+                            {
+                                "type": "text",
+                                "text": {
+                                    "content": _bounded(f"Reminder: {label}", 300),
+                                    "link": {"url": reminder.url} if reminder.url else None,
+                                },
+                            }
+                        ],
+                        "icon": {"type": "emoji", "emoji": "⏰"},
+                        "color": "yellow_background",
+                    },
+                }
+            )
+
+        backlog_text = f"{notification.backlog_count} other task(s) are safely kept out of today's view."
+        if notification.verify_count:
+            backlog_text += f" {notification.verify_count} Canvas item(s) need status confirmation."
+        backlog_rich_text: list[dict[str, Any]] = [
+            {"type": "text", "text": {"content": backlog_text}}
+        ]
+        if full_tasks_url:
+            backlog_rich_text.extend(
+                [
+                    {"type": "text", "text": {"content": " "}},
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "Open the full task list only when you need it.",
+                            "link": {"url": full_tasks_url},
+                        },
+                        "annotations": {"bold": True},
+                    },
+                ]
+            )
+        blocks.append(
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": backlog_rich_text},
+            }
+        )
+        self.client.append_block_children(page_id, blocks)
+        return FocusDashboardSyncResult(
+            page_id=page_id,
+            url=str(page.get("url") or f"https://www.notion.so/{page_id.replace('-', '')}"),
+            page_created=created,
+            blocks_written=len(blocks),
+        )
 
     def master_tasks_enabled(self) -> bool:
         """Return whether the safe migration has created the master database."""

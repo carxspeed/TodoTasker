@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 
 from daily_brief.http import JsonResponse
-from daily_brief.models import NotionWorkItem
+from daily_brief.models import DailyNotification, NotionWorkItem, NotificationTask
 from daily_brief.canvas import load_fixture
 from daily_brief.notion import (
     TASK_DATABASES,
@@ -139,6 +139,9 @@ class FakeSchoolClient:
         self.ensured_properties = []
         self.updated_rows = []
         self.archived_rows = []
+        self.created_pages = []
+        self.appended_blocks = []
+        self.archived_blocks = []
 
     def retrieve_page(self, page_id):
         return {"id": page_id, "url": "https://notion.test/tasks"}
@@ -187,6 +190,18 @@ class FakeSchoolClient:
     def archive_page(self, page_id):
         self.archived_rows.append(page_id)
         return {"id": page_id, "archived": True}
+
+    def create_child_page(self, title, **kwargs):
+        self.created_pages.append((title, kwargs))
+        return {"id": "today-page", "url": "https://notion.test/today"}
+
+    def append_block_children(self, page_id, blocks):
+        self.appended_blocks.append((page_id, blocks))
+        return {"results": blocks}
+
+    def archive_block(self, block_id):
+        self.archived_blocks.append(block_id)
+        return {"id": block_id, "archived": True}
 
 
 def test_school_board_creates_one_table_per_class_and_excludes_course() -> None:
@@ -509,6 +524,44 @@ def test_master_focus_prioritizes_assessment_and_targets_its_real_assignment() -
     assert fake.updated_rows[0][1]["Next step"].startswith(
         "Study the topics listed in the class planner"
     )
+
+
+def test_focus_dashboard_is_phone_first_and_links_exact_task_rows() -> None:
+    from datetime import datetime, timezone
+
+    fake = FakeSchoolClient()
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+    task = NotificationTask(
+        key="assignment:1",
+        name="Finish the physics lab",
+        course="AP Physics",
+        next_step="Complete the graph and write the conclusion.",
+        due_at=datetime(2026, 9, 21, 21, 0, tzinfo=timezone.utc),
+        effort_hours=1.5,
+        url="https://notion.test/task-1",
+    )
+    notification = DailyNotification(
+        target_date=date(2026, 9, 21),
+        primary=task,
+        backlog_count=17,
+        verify_count=2,
+    )
+
+    result = board.sync_focus_dashboard(
+        notification,
+        full_tasks_url="https://notion.test/tasks",
+    )
+
+    assert result.url == "https://notion.test/today"
+    assert result.page_created is True
+    assert fake.created_pages == [("Today", {"parent_page_id": "parent"})]
+    assert len(fake.appended_blocks) == 1
+    blocks = fake.appended_blocks[0][1]
+    assert [block["type"] for block in blocks] == ["paragraph", "callout", "paragraph"]
+    task_text = blocks[1]["callout"]["rich_text"]
+    assert task_text[0]["text"]["link"] == {"url": "https://notion.test/task-1"}
+    assert "17 other task(s)" in blocks[-1]["paragraph"]["rich_text"][0]["text"]["content"]
+    assert fake.archived_blocks == []
 
 
 def test_school_context_reads_notes_and_status_without_canvas_bookkeeping() -> None:

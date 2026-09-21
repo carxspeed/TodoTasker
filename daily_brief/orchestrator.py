@@ -777,6 +777,12 @@ class DailyBriefOrchestrator:
         notion_url = None
         task_urls: dict[str, str] = {}
         focus_aliases: dict[str, str] = {}
+        notification = build_daily_notification(
+            classification,
+            guidance=guidance,
+            canvas=bundle.canvas,
+            warnings=warnings,
+        )
         if self.notion_delivery is not None:
             try:
                 guidance_by_key = (
@@ -838,6 +844,18 @@ class DailyBriefOrchestrator:
                         source_id_by_focus_key=focus_aliases,
                         target_date=target_date,
                     )
+                    notification = apply_task_urls(
+                        notification,
+                        master_result.task_urls,
+                        aliases=focus_aliases,
+                    )
+                    plan_result = self.notion_delivery.sync_focus_dashboard(
+                        notification,
+                        full_tasks_url=(
+                            "https://www.notion.so/"
+                            + master_result.database_id.replace("-", "")
+                        ),
+                    )
                     notion_result = master_result
                     task_urls = master_result.task_urls
                 else:
@@ -866,12 +884,6 @@ class DailyBriefOrchestrator:
                 self.state_store.save(state)
             except Exception:
                 notion_url = None
-        notification = build_daily_notification(
-            classification,
-            guidance=guidance,
-            canvas=bundle.canvas,
-            warnings=warnings,
-        )
         notification = apply_task_urls(
             notification,
             task_urls,

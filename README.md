@@ -208,7 +208,7 @@ The Tasks database contains the task name, area, course, due time, priority, eff
 
 Use the database views instead of scanning one huge table:
 
-- **Today** is a compact phone-friendly list of at most three tasks. It shows the primary action first and links each item to its complete task row.
+- **Today** is a generated phone-friendly page with at most three task cards. It shows the primary action first, links each title to its complete task row, and keeps the backlog behind one optional full-list link.
 - **School** groups assignments by course on the same page and sorts each course by due date.
 - **Work**, **Connections**, and **Misc** show only unfinished tasks in that area, sorted by due date.
 - **All Tasks** is the full administrative table, including the normally hidden sync fields.
@@ -353,7 +353,7 @@ Verify that:
 - the School view has one group per Canvas class and its assignments are present;
 - Today contains no more than three focused tasks and is readable on a phone;
 - one morning message arrived in Telegram;
-- the Telegram button opens the To Do List dashboard.
+- the Telegram button opens the compact Today page rather than the full To Do List dashboard.
 
 Run the same two commands once more. The system should update matching Tasks rows and reuse the same Telegram message rather than create duplicates or repeat presentation text in `Next step`.
 
