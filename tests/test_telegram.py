@@ -101,6 +101,7 @@ def compact_notification() -> DailyNotification:
                 course="Calculus",
                 next_step="Complete the first problem.",
                 effort_hours=0.5,
+                url="https://notion.test/calculus-practice",
             )
         ],
         reminders=[
@@ -124,6 +125,7 @@ def test_compact_notification_is_phone_sized_and_escapes_html() -> None:
     assert "Lab &lt;Millions&gt;" in rendered
     assert "7 other tasks remain in Notion" in rendered
     assert "2 Canvas tasks need status confirmation" in rendered
+    assert '<a href="' in rendered
     assert "Capacity" not in rendered
 
 

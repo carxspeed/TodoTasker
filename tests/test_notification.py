@@ -10,7 +10,7 @@ from daily_brief.models import (
     GuidanceResult,
     PlannerEvent,
 )
-from daily_brief.notification import build_daily_notification
+from daily_brief.notification import apply_task_urls, build_daily_notification
 
 
 TARGET = date(2026, 9, 20)
@@ -91,3 +91,15 @@ def test_internal_diagnostics_do_not_become_notification_notices() -> None:
 
     assert result.notice == "Canvas couldn't refresh; today's plan may be missing recent changes."
     assert "compatible cached" not in result.model_dump_json()
+
+
+def test_exact_notion_urls_replace_source_links_and_follow_aliases() -> None:
+    current = build_daily_notification(classification([task("planner:quiz", "Study Quiz")]))
+
+    linked = apply_task_urls(
+        current,
+        {"assignment:quiz": "https://notion.test/quiz-row"},
+        aliases={"planner:quiz": "assignment:quiz"},
+    )
+
+    assert linked.primary and linked.primary.url == "https://notion.test/quiz-row"

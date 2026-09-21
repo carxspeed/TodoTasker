@@ -42,7 +42,7 @@ from .models import (
     SeenAssignment,
 )
 from .notion import NotionSchoolBoard, NotionTaskStore
-from .notification import build_daily_notification
+from .notification import apply_task_urls, build_daily_notification
 from .render import deterministic_guidance, render_brief
 from .runtime import SourceCache, alert_incident, normalized_hash, resolve_incident_dir
 from .state import StateStore
@@ -745,6 +745,8 @@ class DailyBriefOrchestrator:
         delivery = state.deliveries.setdefault(target_date.isoformat(), DeliveryRecord())
         delivery.brief_hash = brief_hash
         notion_url = None
+        task_urls: dict[str, str] = {}
+        focus_aliases: dict[str, str] = {}
         if self.notion_delivery is not None:
             try:
                 guidance_by_key = (
@@ -807,6 +809,7 @@ class DailyBriefOrchestrator:
                         target_date=target_date,
                     )
                     notion_result = master_result
+                    task_urls = master_result.task_urls
                 else:
                     if bundle.canvas is not None:
                         notion_result = self.notion_delivery.sync_canvas_assignments(
@@ -838,6 +841,11 @@ class DailyBriefOrchestrator:
             guidance=guidance,
             canvas=bundle.canvas,
             warnings=warnings,
+        )
+        notification = apply_task_urls(
+            notification,
+            task_urls,
+            aliases=focus_aliases,
         )
         summary = render_notification(notification)
         payload_hash = normalized_hash(

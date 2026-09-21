@@ -84,8 +84,14 @@ def render_notification(notification: DailyNotification) -> TelegramSummary:
             title = _short(task.name, 75)
             if task.course:
                 title = f"{_short(task.course, 28)} · {title}"
+            rendered_title = html.escape(title)
+            if task.url:
+                rendered_title = (
+                    f'<a href="{html.escape(task.url, quote=True)}">'
+                    f"{rendered_title}</a>"
+                )
             lines.append(
-                f"{index}. {html.escape(title)} · {_format_effort(task.effort_hours)}"
+                f"{index}. {rendered_title} · {_format_effort(task.effort_hours)}"
             )
     if notification.reminders:
         lines.append("")

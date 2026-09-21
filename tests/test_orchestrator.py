@@ -15,7 +15,7 @@ from daily_brief.models import (
     GuidanceResult,
     NotionSnapshot,
 )
-from daily_brief.notion import SchoolSyncResult
+from daily_brief.notion import MasterTaskSyncResult, SchoolSyncResult
 from daily_brief.orchestrator import DailyBriefOrchestrator, LiveSourceProvider
 from daily_brief.orchestrator import _assessment_focus_aliases
 from daily_brief.state import StateStore
@@ -94,6 +94,7 @@ class MasterNotionDelivery(NotionDelivery):
         self.master_items = []
         self.master_sync_calls = 0
         self.master_focus_calls = 0
+        self.task_urls = {}
 
     def master_tasks_enabled(self):
         return True
@@ -120,7 +121,12 @@ class MasterNotionDelivery(NotionDelivery):
 
     def sync_master_tasks(self, *args, **kwargs):
         self.master_sync_calls += 1
-        return SchoolSyncResult("page", "https://notion.test/page")
+        return MasterTaskSyncResult(
+            database_id="master-db",
+            page_id="page",
+            url="https://notion.test/page",
+            task_urls=self.task_urls,
+        )
 
     def sync_master_focus(self, *args, **kwargs):
         self.master_focus_calls += 1
@@ -131,13 +137,16 @@ class Telegram:
     def __init__(self):
         self.sent = 0
         self.edited = 0
+        self.last_notification = None
 
     def send_notification(self, notification, notion_url):
         self.sent += 1
+        self.last_notification = notification
         return render_notification(notification), TelegramResult(True, 44)
 
     def edit_notification(self, message_id, notification, notion_url):
         self.edited += 1
+        self.last_notification = notification
         return render_notification(notification), TelegramResult(True, message_id)
 
 
@@ -411,6 +420,7 @@ def test_master_layout_is_the_source_of_truth_and_routes_delivery_without_duplic
     notion = MasterNotionDelivery()
     provider = Provider()
     assignment = provider.canvas.assignments[0]
+    notion.task_urls = {assignment.key: "https://notion.test/exact-assignment"}
     notion.master_context = {
         assignment.key: {"done": False, "notes": "Half complete."}
     }
@@ -451,6 +461,7 @@ def test_master_layout_is_the_source_of_truth_and_routes_delivery_without_duplic
     assert notion.master_focus_calls == 1
     assert notion.calls == 0
     assert notion.plan_calls == 0
+    assert telegram.last_notification.primary.url == "https://notion.test/exact-assignment"
 
 
 def test_delivery_reuses_prepared_guidance_and_same_payload_skips(tmp_path: Path) -> None:

@@ -127,3 +127,28 @@ def build_daily_notification(
         notice=_notice(warnings),
         focus_reason=_bounded(reason, 240),
     )
+
+
+def apply_task_urls(
+    notification: DailyNotification,
+    task_urls: dict[str, str],
+    *,
+    aliases: dict[str, str] | None = None,
+) -> DailyNotification:
+    """Prefer exact Notion-row links while retaining source links as a fallback."""
+
+    aliases = aliases or {}
+
+    def linked(task: NotificationTask | None) -> NotificationTask | None:
+        if task is None:
+            return None
+        source_id = aliases.get(task.key, task.key)
+        url = task_urls.get(source_id, "").strip()
+        return task.model_copy(update={"url": url}) if url else task
+
+    return notification.model_copy(
+        update={
+            "primary": linked(notification.primary),
+            "followups": [linked(task) for task in notification.followups],
+        }
+    )
