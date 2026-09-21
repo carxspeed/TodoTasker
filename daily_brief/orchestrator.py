@@ -43,7 +43,7 @@ from .models import (
 )
 from .notion import NotionSchoolBoard, NotionTaskStore
 from .notification import apply_task_urls, build_daily_notification
-from .render import deterministic_guidance, render_brief
+from .render import deterministic_guidance, render_brief, resolved_guidance, select_focus_items
 from .runtime import SourceCache, alert_incident, normalized_hash, resolve_incident_dir
 from .state import StateStore
 from .telegram import TelegramClient, render_notification
@@ -668,7 +668,8 @@ class DailyBriefOrchestrator:
         )
         model_guidance = {item.key: item.guidance for item in result.task_guidance} if result else {}
         all_guidance = {
-            item.key: model_guidance.get(item.key, deterministic_guidance(item)) for item in selected
+            item.key: resolved_guidance(item, model_guidance.get(item.key, ""))
+            for item in selected
         }
         artifact = PreparedArtifact(
             target_date=target_date,
@@ -802,6 +803,17 @@ class DailyBriefOrchestrator:
                     if guidance
                     else {}
                 )
+                selected_items = self._selected(classification)
+                guidance_by_key = {
+                    item.key: resolved_guidance(
+                        item, guidance_by_key.get(item.key, "")
+                    )
+                    for item in selected_items
+                }
+                safe_focus, safe_focus_reason = select_focus_items(
+                    classification, guidance
+                )
+                safe_focus_keys = [item.key for item in safe_focus]
                 summaries_by_key = (
                     {item.key: item.summary for item in guidance.task_guidance}
                     if guidance
@@ -843,16 +855,8 @@ class DailyBriefOrchestrator:
                     plan_result = self.notion_delivery.sync_master_focus(
                         classification,
                         guidance_by_key=guidance_by_key,
-                        focus_keys=(
-                            guidance.focus.today_keys
-                            if guidance and guidance.focus
-                            else None
-                        ),
-                        focus_reason=(
-                            guidance.focus.reason
-                            if guidance and guidance.focus
-                            else ""
-                        ),
+                        focus_keys=safe_focus_keys,
+                        focus_reason=safe_focus_reason,
                         source_id_by_focus_key=focus_aliases,
                         target_date=target_date,
                     )
@@ -882,11 +886,7 @@ class DailyBriefOrchestrator:
                     plan_result = self.notion_delivery.sync_daily_plan(
                         classification,
                         guidance_by_key=guidance_by_key,
-                        focus_keys=(
-                            guidance.focus.today_keys
-                            if guidance and guidance.focus
-                            else None
-                        ),
+                        focus_keys=safe_focus_keys,
                         target_date=target_date,
                     )
                 delivery.notion_page_id = plan_result.page_id

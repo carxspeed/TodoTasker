@@ -762,6 +762,8 @@ def test_assignment_details_include_linked_docx_instructions() -> None:
                         "due_at": "2026-09-05T04:00:00Z",
                         "points_possible": 20,
                         "html_url": "https://canvas.test/courses/2/assignments/7",
+                        "locked_for_user": True,
+                        "unlock_at": "2026-09-04T15:00:00Z",
                         "description": '<p>Follow the lab sheet.</p><a href="https://canvas.test/courses/2/files/99?wrap=1">Lab.docx</a>',
                     },
                 )
@@ -783,6 +785,8 @@ def test_assignment_details_include_linked_docx_instructions() -> None:
     enriched, warnings = enrich_assignment_details(Request(), "https://canvas.test", [assignment])
     assert warnings == []
     assert enriched[0].name == "Lab: Millions"
+    assert enriched[0].locked_for_user is True
+    assert enriched[0].unlock_at == datetime(2026, 9, 4, 15, tzinfo=timezone.utc)
     assert "Follow the lab sheet" in enriched[0].description
     assert "Graph the measurements" in enriched[0].description
 
@@ -928,6 +932,41 @@ def test_missing_union_keeps_unknown_locked_item_in_verify_path() -> None:
     assert len(normalized.assignments) == 1
     assert normalized.assignments[0].submission_status == "unknown"
     assert normalized.assignments[0].needs_confirmation is True
+    assert normalized.assignments[0].locked_for_user is True
+
+
+def test_missing_source_adds_lock_state_to_existing_planner_item() -> None:
+    planner = {
+        "plannable_type": "assignment",
+        "plannable_id": 99,
+        "course_id": 5,
+        "context_name": "History",
+        "plannable": {
+            "id": 99,
+            "name": "Future project",
+            "due_at": "2026-09-25T23:59:00Z",
+        },
+        "submissions": {"submitted": False},
+    }
+    missing = {
+        "id": 99,
+        "course_id": 5,
+        "name": "Future project",
+        "due_at": "2026-09-25T23:59:00Z",
+        "locked_for_user": True,
+        "unlock_at": "2026-09-24T15:00:00Z",
+    }
+
+    normalized = normalize_assignment_sources(
+        [planner], [missing], active_courses={5: "History"}
+    )
+
+    assert len(normalized.assignments) == 1
+    assert normalized.assignments[0].submission_status == "unsubmitted"
+    assert normalized.assignments[0].locked_for_user is True
+    assert normalized.assignments[0].unlock_at == datetime(
+        2026, 9, 24, 15, tzinfo=timezone.utc
+    )
 
 
 def test_excluded_course_removes_only_its_assignments() -> None:

@@ -66,6 +66,8 @@ def render_notification(notification: DailyNotification) -> TelegramSummary:
         lines.extend(["", "✅ No focus tasks selected."])
     else:
         title = _short(primary.name, 90)
+        if primary.locked_for_user:
+            title = f"🔒 {title}"
         if primary.course:
             title = f"{_short(primary.course, 35)} · {title}"
         lines.extend(
@@ -83,6 +85,8 @@ def render_notification(notification: DailyNotification) -> TelegramSummary:
         lines.extend(["", "<b>Then</b>"])
         for index, task in enumerate(notification.followups, start=2):
             title = _short(task.name, 75)
+            if task.locked_for_user:
+                title = f"🔒 {title}"
             if task.course:
                 title = f"{_short(task.course, 28)} · {title}"
             rendered_title = html.escape(title)

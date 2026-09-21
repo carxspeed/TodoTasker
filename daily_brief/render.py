@@ -13,6 +13,8 @@ def _format_hours(value: float) -> str:
 
 
 def deterministic_guidance(item: ClassifiedItem) -> str:
+    if item.locked_for_user:
+        return "Locked in Canvas—keep it visible and check again when it becomes available."
     if item.kind == "planner_assessment":
         return "Study the topics listed in the class planner, then do a short practice check."
     if item.source == "notion" and (not item.next_step.strip() or "unknown" in item.next_step.casefold()):
@@ -22,6 +24,13 @@ def deterministic_guidance(item: ClassifiedItem) -> str:
     if item.user_notes.strip():
         return f"Continue from your Notion note: {item.user_notes.strip()}"
     return "Open the assignment, review the requirements, and complete the first concrete part."
+
+
+def resolved_guidance(item: ClassifiedItem, model_guidance: str = "") -> str:
+    """Apply non-negotiable task-state guidance after optional model wording."""
+    if item.locked_for_user:
+        return deterministic_guidance(item)
+    return model_guidance or deterministic_guidance(item)
 
 
 def _format_due(value: datetime | None, display_timezone: tzinfo) -> str:
@@ -41,7 +50,7 @@ def _render_task(
     lines = [f"- {item.name} (~{item.effort_hours:g}h){due}"]
     if item.source == "canvas" and item.course:
         lines.append(f"  Course: {item.course}")
-    lines.append(f"  {guidance.get(item.key) or deterministic_guidance(item)}")
+    lines.append(f"  {resolved_guidance(item, guidance.get(item.key, ''))}")
     return lines
 
 
@@ -51,6 +60,25 @@ def select_focus_items(
     """Keep the delivered brief humane while the full source tables remain intact."""
     selected = [*classification.must, *classification.smart, *classification.may]
     by_key = {item.key: item for item in selected}
+    available = [item for item in selected if not item.locked_for_user]
+
+    def available_first(items: list[ClassifiedItem], reason: str) -> tuple[list[ClassifiedItem], str]:
+        if not items:
+            return items, reason
+        if available and items[0].locked_for_user:
+            primary = available[0]
+            rest = [item for item in items if item.key != primary.key][:2]
+            return (
+                [primary, *rest],
+                "Start with an available task; locked Canvas work stays visible for later.",
+            )
+        if not available:
+            return (
+                items,
+                "All selected Canvas tasks are locked right now; keep them visible and check when they become available.",
+            )
+        return items, reason
+
     if guidance and guidance.focus:
         keys = guidance.focus.today_keys
         if (
@@ -59,14 +87,22 @@ def select_focus_items(
             and len(keys) == len(set(keys))
             and all(key in by_key for key in keys)
         ):
-            return [by_key[key] for key in keys], guidance.focus.reason
+            return available_first(
+                [by_key[key] for key in keys], guidance.focus.reason
+            )
     if not selected:
         return [], ""
     imminent = next((item for item in selected if item.kind == "planner_assessment"), None)
     if imminent is not None:
         rest = [item for item in selected if item.key != imminent.key][:2]
-        return [imminent, *rest], "An imminent assessment needs study preparation before ordinary overdue work."
-    return selected[:3], "Start with the nearest required task, then continue only if time remains."
+        return available_first(
+            [imminent, *rest],
+            "An imminent assessment needs study preparation before ordinary overdue work.",
+        )
+    return available_first(
+        selected[:3],
+        "Start with the nearest required task, then continue only if time remains.",
+    )
 
 
 def render_brief(

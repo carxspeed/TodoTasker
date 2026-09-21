@@ -2,7 +2,7 @@ from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 from daily_brief.models import ClassificationOutput, ClassifiedItem, FocusPlan, GuidanceItem, GuidanceResult
-from daily_brief.render import render_brief
+from daily_brief.render import deterministic_guidance, render_brief, select_focus_items
 
 
 def item(key, source="canvas", next_step=""):
@@ -90,3 +90,33 @@ def test_focus_hides_the_large_backlog_but_preserves_the_primary_reason() -> Non
     assert "Canonical assignment:3" in text
     assert "Canonical assignment:1" not in text
     assert "Defer without guilt: 2 other selected task(s)" in text
+
+
+def test_locked_model_primary_is_replaced_but_remains_a_followup() -> None:
+    locked = item("assignment:locked").model_copy(
+        update={"name": "Locked worksheet", "locked_for_user": True}
+    )
+    available = item("assignment:available").model_copy(
+        update={"name": "Available homework"}
+    )
+    current = classification([locked, available])
+    guidance = GuidanceResult(
+        focus=FocusPlan(
+            primary_key=locked.key,
+            reason="It has the closest deadline.",
+            today_keys=[locked.key, available.key],
+        )
+    )
+
+    focus, reason = select_focus_items(current, guidance)
+
+    assert [value.key for value in focus] == [available.key, locked.key]
+    assert "available task" in reason
+
+
+def test_locked_task_guidance_explains_why_it_is_not_actionable() -> None:
+    locked = item("assignment:locked").model_copy(
+        update={"locked_for_user": True}
+    )
+
+    assert deterministic_guidance(locked).startswith("Locked in Canvas")

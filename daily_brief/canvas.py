@@ -913,6 +913,10 @@ def enrich_assignment_details(
                         str(value)
                         for value in (detail.get("submission_types") or assignment.submission_types)
                     ],
+                    "locked_for_user": bool(
+                        detail.get("locked_for_user", assignment.locked_for_user)
+                    ),
+                    "unlock_at": _aware_or_none(detail.get("unlock_at")) or assignment.unlock_at,
                 }
             )
         )
@@ -1072,6 +1076,8 @@ def normalize_task(
         submission_types=[str(value) for value in plannable.get("submission_types") or []],
         submission_status=submission_status,
         needs_confirmation=needs_confirmation,
+        locked_for_user=bool(plannable.get("locked_for_user")),
+        unlock_at=_aware_or_none(plannable.get("unlock_at")),
     )
 
 
@@ -1176,6 +1182,13 @@ def normalize_assignment_sources(
             existing = assignments.get(normalized.key)
             if existing is None or (existing.needs_confirmation and verified):
                 assignments[normalized.key] = normalized
+            elif normalized.locked_for_user or normalized.unlock_at is not None:
+                assignments[normalized.key] = existing.model_copy(
+                    update={
+                        "locked_for_user": normalized.locked_for_user,
+                        "unlock_at": normalized.unlock_at,
+                    }
+                )
             if not verified:
                 warnings.append(f"Verify old Canvas item {normalized.name}")
         except (ValueError, TypeError):

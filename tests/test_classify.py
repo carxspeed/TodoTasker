@@ -90,6 +90,18 @@ def test_canvas_24_hour_boundary_is_must_and_missing_due_is_may() -> None:
     assert selected_tier(result, "assignment:2") == "may"
 
 
+def test_locked_assignment_stays_visible_but_sorts_after_available_work() -> None:
+    locked = canvas_item("assignment:1", due_hours=1).model_copy(
+        update={"locked_for_user": True}
+    )
+    available = canvas_item("assignment:2", due_hours=2)
+
+    result = run([locked, available])
+
+    assert [item.key for item in result.must] == [available.key, locked.key]
+    assert result.must[1].locked_for_user is True
+
+
 def test_tomorrows_weekly_quiz_becomes_a_study_task_today() -> None:
     event = PlannerEvent(
         course="Calculus",

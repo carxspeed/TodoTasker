@@ -103,6 +103,8 @@ def _classify_canvas(
             points=item.points,
             submission_status=item.submission_status,
             needs_confirmation=item.needs_confirmation,
+            locked_for_user=item.locked_for_user,
+            unlock_at=item.unlock_at,
         ),
         urgent_verify,
     )
@@ -231,11 +233,12 @@ def _due_sort(item: ClassifiedItem) -> datetime:
 
 
 def _must_sort(item: ClassifiedItem):
-    return (_due_sort(item), -item.overdue_periods, item.key)
+    return (item.locked_for_user, _due_sort(item), -item.overdue_periods, item.key)
 
 
 def _optional_sort(item: ClassifiedItem):
     return (
+        item.locked_for_user,
         0 if item.tier == "smart" else 1,
         _due_sort(item),
         -item.overdue_periods,

@@ -12,7 +12,7 @@ from .models import (
     NotificationReminder,
     NotificationTask,
 )
-from .render import deterministic_guidance, select_focus_items
+from .render import resolved_guidance, select_focus_items
 
 
 ASSESSMENT_RE = re.compile(
@@ -43,12 +43,13 @@ def _notification_task(item, guidance_by_key: dict[str, str], local_timezone) ->
         name=item.name,
         course=item.course,
         next_step=_bounded(
-            guidance_by_key.get(item.key) or deterministic_guidance(item), 160
+            resolved_guidance(item, guidance_by_key.get(item.key, "")), 160
         ),
         due_at=due_at,
         effort_hours=item.effort_hours,
         kind=item.kind,
         url=item.url,
+        locked_for_user=item.locked_for_user,
     )
 
 

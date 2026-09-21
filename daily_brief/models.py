@@ -29,6 +29,8 @@ class CanvasAssignment(Contract):
     submission_types: list[str] = Field(default_factory=list)
     submission_status: Literal["unsubmitted", "unknown"]
     needs_confirmation: bool = False
+    locked_for_user: bool = False
+    unlock_at: AwareDatetime | None = None
 
 
 class CanvasEvent(Contract):
@@ -205,6 +207,8 @@ class ClassifiedItem(Contract):
     momentum: bool = False
     submission_status: Literal["unsubmitted", "unknown"] | None = None
     needs_confirmation: bool = False
+    locked_for_user: bool = False
+    unlock_at: AwareDatetime | None = None
 
 
 class Promotion(Contract):
@@ -264,6 +268,7 @@ class NotificationTask(Contract):
     effort_hours: float = Field(gt=0)
     kind: str = ""
     url: str = ""
+    locked_for_user: bool = False
 
 
 class NotificationReminder(Contract):

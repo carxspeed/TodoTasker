@@ -58,6 +58,32 @@ def test_notification_contains_only_the_focus_and_backlog_count() -> None:
     assert result.backlog_count == 3
 
 
+def test_locked_followup_remains_visible_and_is_marked_locked() -> None:
+    locked = task("assignment:locked", "Locked worksheet").model_copy(
+        update={"locked_for_user": True}
+    )
+    available = task("assignment:available", "Available homework")
+    guidance = GuidanceResult(
+        task_guidance=[
+            GuidanceItem(key=locked.key, guidance="Start solving the worksheet."),
+        ],
+        focus=FocusPlan(
+            primary_key=locked.key,
+            today_keys=[locked.key, available.key],
+            reason="It is due first.",
+        ),
+    )
+
+    result = build_daily_notification(
+        classification([locked, available]), guidance=guidance
+    )
+
+    assert result.primary and result.primary.key == available.key
+    assert result.followups[0].key == locked.key
+    assert result.followups[0].locked_for_user is True
+    assert result.followups[0].next_step.startswith("Locked in Canvas")
+
+
 def test_same_day_assessment_is_a_reminder_not_the_primary_task() -> None:
     current = classification([task("assignment:homework", "Calculus homework")])
     canvas = load_fixture("fixtures/sample_todo.json").model_copy(
