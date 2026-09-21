@@ -693,6 +693,36 @@ class DailyBriefOrchestrator:
         except (OSError, ValueError):
             return None
 
+    def preview_notification(
+        self,
+        provider,
+        *,
+        target_date: date,
+        as_of: datetime,
+    ):
+        """Build the Telegram card without cache, state, Notion, or Telegram writes."""
+
+        artifact, _state = self.prepare(
+            provider,
+            target_date=target_date,
+            as_of=as_of,
+            dry_run=True,
+        )
+        guidance = GuidanceResult(
+            overview="",
+            task_guidance=[
+                GuidanceItem(key=key, guidance=value)
+                for key, value in artifact.guidance.items()
+            ],
+            focus=artifact.focus,
+        )
+        return build_daily_notification(
+            artifact.classification,
+            guidance=guidance,
+            canvas=artifact.sources.canvas,
+            warnings=artifact.warnings,
+        )
+
     def deliver(
         self,
         provider,

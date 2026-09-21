@@ -293,7 +293,7 @@ class PreparedSources(Contract):
     canvas: CanvasEnvelope | None = None
     notion: list[NotionWorkItem] | None = None
     calendar: CalendarSnapshot | None = None
-    statuses: dict[str, Literal["live", "cached", "unavailable"]]
+    statuses: dict[str, Literal["live", "cached", "stale", "unavailable"]]
 
 
 class PreparedArtifact(Contract):

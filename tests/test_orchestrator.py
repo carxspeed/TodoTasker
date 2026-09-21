@@ -352,6 +352,29 @@ def test_prepare_dry_run_makes_one_call_and_writes_nothing(tmp_path: Path) -> No
     after = {path.relative_to(tmp_path) for path in tmp_path.rglob("*")}
     assert guidance.calls == 1
     assert "Synthetic physics worksheet" in artifact.rendered_brief
+
+
+def test_notification_preview_makes_no_runtime_writes(tmp_path: Path) -> None:
+    orchestrator = make_orchestrator(tmp_path, Guidance())
+    before = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+
+    notification = orchestrator.preview_notification(
+        Provider(),
+        target_date=TARGET,
+        as_of=datetime(2026, 9, 2, 7, 0, tzinfo=TZ),
+    )
+
+    after = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    assert notification.primary is not None
+    assert before == after
     assert before == after
 
 

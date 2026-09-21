@@ -13,7 +13,7 @@ from daily_brief.config import ConfigurationError, load_settings
 from daily_brief.notion import NotionSchoolBoard, summarize_master_migration
 from daily_brief.orchestrator import DailyBriefOrchestrator, LiveSourceProvider
 from daily_brief.runtime import DeferredHealthyLock, HeartbeatLock
-from daily_brief.telegram import TelegramClient
+from daily_brief.telegram import TelegramClient, render_notification_preview
 
 
 def _in_window(now_time: time, start: time, end: time) -> bool:
@@ -25,7 +25,7 @@ def _in_window(now_time: time, start: time, end: time) -> bool:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("prepare", "deliver"):
+    for name in ("prepare", "deliver", "preview-notification"):
         command = sub.add_parser(name)
         command.add_argument("--target-date", type=date.fromisoformat)
         command.add_argument("--fixture", type=Path)
@@ -126,6 +126,9 @@ def main() -> int:
         elif args.command == "migrate-notion":
             target = explicit or now.date()
             as_of = now
+        elif args.command == "preview-notification":
+            target = explicit or now.date()
+            as_of = now
         else:
             if not explicit and now.time() < time(7, 30):
                 print("skipped_stale")
@@ -152,7 +155,8 @@ def main() -> int:
         dry_run = (
             not args.apply
             if args.command == "migrate-notion"
-            else getattr(args, "dry_run", False)
+            else args.command == "preview-notification"
+            or getattr(args, "dry_run", False)
         )
         lock = nullcontext() if dry_run else HeartbeatLock()
         with lock:
@@ -181,6 +185,21 @@ def main() -> int:
                 )
                 print(text)
                 print(f"delivery={status}")
+            elif args.command == "preview-notification":
+                provider = LiveSourceProvider(
+                    settings, fixture=args.fixture, profile=args.profile
+                )
+                notification = orchestrator.preview_notification(
+                    provider,
+                    target_date=target,
+                    as_of=as_of,
+                )
+                print("Telegram notification preview")
+                print()
+                print(render_notification_preview(notification))
+                if notification.primary and notification.primary.url:
+                    print()
+                    print(f"[Open main task] {notification.primary.url}")
             else:
                 print("alerted" if orchestrator.watchdog(target) else "healthy")
         return 0

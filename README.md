@@ -329,6 +329,14 @@ venv\Scripts\python.exe brief.py prepare `
 
 `--fixture` avoids live source collection and `--dry-run` prevents state, cache, log, Notion, and Telegram writes.
 
+Preview the compact phone notification without changing state, Notion, or Telegram:
+
+```powershell
+venv\Scripts\python.exe brief.py preview-notification
+```
+
+Add `--fixture fixtures\sample_todo.json` to preview the layout without live Canvas data.
+
 ## 11. Run the first live morning cycle
 
 The following commands are intentionally live. `prepare` updates local state. `deliver` synchronizes the canonical Tasks database, refreshes the three-item Today focus, and sends or edits the brief in Telegram.

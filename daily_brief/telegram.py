@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import re
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -119,6 +120,14 @@ def render_notification(notification: DailyNotification) -> TelegramSummary:
     if len(text) > NOTIFICATION_LIMIT:
         raise ValueError("compact Telegram notification exceeds its limit")
     return TelegramSummary(text)
+
+
+def render_notification_preview(notification: DailyNotification) -> str:
+    """Show the Telegram card in a terminal without exposing HTML markup."""
+
+    rendered = render_notification(notification).text
+    plain = re.sub(r"</?(?:b|a)(?:\s+[^>]*)?>", "", rendered)
+    return html.unescape(plain)
 
 
 def _cap_task_title(line: str) -> str:

@@ -9,6 +9,7 @@ from daily_brief.telegram import (
     TelegramClient,
     build_summary,
     render_notification,
+    render_notification_preview,
 )
 
 
@@ -146,3 +147,11 @@ def test_send_notification_uses_html_and_two_useful_buttons() -> None:
         "Open main task",
         "Today in Notion",
     ]
+
+
+def test_terminal_preview_removes_telegram_html_without_losing_text() -> None:
+    preview = render_notification_preview(compact_notification())
+
+    assert "<b>" not in preview and "<a " not in preview
+    assert "Start here" in preview
+    assert "Calculus practice" in preview
