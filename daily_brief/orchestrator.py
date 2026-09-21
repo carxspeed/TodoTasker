@@ -57,6 +57,7 @@ class SourceBundle:
     statuses: dict[str, str]
     warnings: list[str]
     errors: dict[str, str] = field(default_factory=dict)
+    diagnostics: list[str] = field(default_factory=list)
 
 
 def _assessment_focus_aliases(
@@ -253,6 +254,7 @@ class DailyBriefOrchestrator:
         statuses: dict[str, str] = {}
         warnings: list[str] = []
         errors: dict[str, str] = {}
+        diagnostics: list[str] = []
         canvas = None
         notion = None
         calendar = None
@@ -261,9 +263,7 @@ class DailyBriefOrchestrator:
             try:
                 master_layout = self.notion_delivery.master_tasks_enabled()
             except Exception:
-                warnings.append(
-                    "Master Tasks availability could not be checked; legacy Notion status was used"
-                )
+                diagnostics.append("MASTER_TASKS_LAYOUT_CHECK_FAILED")
         try:
             canvas = provider.fetch_canvas(target_date)
             statuses["canvas"] = "live"
@@ -285,11 +285,12 @@ class DailyBriefOrchestrator:
                         assignments.values(),
                         key=lambda item: (item.due_at is None, item.due_at, item.key),
                     ),
-                    "data_warnings": [
-                        *canvas.data_warnings,
-                        f"Partial Canvas response retained compatible cached components from {cached_at.isoformat()}",
-                    ],
+                    "data_warnings": list(canvas.data_warnings),
                 }
+                diagnostics.append(
+                    "CANVAS_PARTIAL_CACHE_MERGE "
+                    f"cached_at={cached_at.isoformat()}"
+                )
                 if canvas.source_status.courses == "failed":
                     updates.update(
                         planners=cached_canvas.planners,
@@ -339,17 +340,25 @@ class DailyBriefOrchestrator:
                 )
                 statuses["canvas"] = "stale" if cross_date_cache else "cached"
                 if cross_date_cache:
+                    diagnostics.append(
+                        f"CANVAS_STALE_CACHE error={error_code} cached_at={cached_at.isoformat()}"
+                    )
                     warnings.append(
-                        f"Canvas live refresh failed ({error_code}); using a stale snapshot "
-                        f"from {cached_at.isoformat()} that may omit recent changes"
+                        "Canvas couldn't refresh; today's plan may be missing recent changes."
                     )
                 else:
-                    warnings.append(f"Canvas is cached from {cached_at.isoformat()}")
+                    diagnostics.append(
+                        f"CANVAS_TARGET_CACHE error={error_code} cached_at={cached_at.isoformat()}"
+                    )
+                    warnings.append(
+                        "Canvas couldn't refresh; saved assignments are being used."
+                    )
             else:
                 statuses["canvas"] = "unavailable"
+                diagnostics.append(f"CANVAS_UNAVAILABLE error={error_code}")
                 warnings.append(
-                    f"Canvas is unavailable ({error_code}); assignments were not treated "
-                    "as an empty success"
+                    "Canvas couldn't refresh and no saved assignments are available; "
+                    "today's plan may be incomplete."
                 )
         if master_layout and self.notion_delivery is not None:
             try:
@@ -367,13 +376,15 @@ class DailyBriefOrchestrator:
                 if cached:
                     notion, cached_at = cached
                     statuses["notion"] = "cached"
-                    warnings.append(
-                        f"Master Tasks is cached from {cached_at.isoformat()}"
+                    diagnostics.append(
+                        f"NOTION_MASTER_CACHE cached_at={cached_at.isoformat()}"
                     )
+                    warnings.append("Notion couldn't refresh; saved tasks are being used.")
                 else:
                     statuses["notion"] = "unavailable"
+                    diagnostics.append("NOTION_MASTER_UNAVAILABLE")
                     warnings.append(
-                        "Master Tasks is unavailable; personal work was not treated as an empty success"
+                        "Notion couldn't refresh; personal tasks may be missing from today's plan."
                     )
         else:
             try:
@@ -386,11 +397,13 @@ class DailyBriefOrchestrator:
                 if cached:
                     notion, cached_at = cached
                     statuses["notion"] = "cached"
-                    warnings.append(f"Notion is cached from {cached_at.isoformat()}")
+                    diagnostics.append(f"NOTION_CACHE cached_at={cached_at.isoformat()}")
+                    warnings.append("Notion couldn't refresh; saved tasks are being used.")
                 else:
                     statuses["notion"] = "unavailable"
+                    diagnostics.append("NOTION_UNAVAILABLE")
                     warnings.append(
-                        "Notion is unavailable; Work was not treated as an empty success"
+                        "Notion couldn't refresh; personal tasks may be missing from today's plan."
                     )
         try:
             calendar = provider.fetch_calendar(target_date, canvas.canvas_events if canvas else [])
@@ -404,10 +417,16 @@ class DailyBriefOrchestrator:
             if cached:
                 calendar, cached_at = cached
                 statuses["calendar"] = "cached"
-                warnings.append(f"Calendar is cached from {cached_at.isoformat()}")
+                diagnostics.append(f"CALENDAR_CACHE cached_at={cached_at.isoformat()}")
+                warnings.append(
+                    "Calendar couldn't refresh; free-time estimates may be outdated."
+                )
             else:
                 statuses["calendar"] = "unavailable"
-                warnings.append("Calendar is unavailable; nominal capacity is being used")
+                diagnostics.append("CALENDAR_UNAVAILABLE")
+                warnings.append(
+                    "Calendar couldn't refresh; a default time estimate is being used."
+                )
         if canvas:
             warnings.extend(canvas.data_warnings)
         if notion:
@@ -442,8 +461,9 @@ class DailyBriefOrchestrator:
                         }
                     )
             except Exception:
+                diagnostics.append("MASTER_TASK_CONTEXT_READ_FAILED")
                 warnings.append(
-                    "Master Tasks notes/status could not be read; source tasks were unchanged"
+                    "Notion progress couldn't refresh; recently completed tasks may still appear."
                 )
         elif canvas is not None and self.notion_delivery is not None:
             try:
@@ -460,8 +480,9 @@ class DailyBriefOrchestrator:
                     )
                 canvas = canvas.model_copy(update={"assignments": assignments})
             except Exception:
+                diagnostics.append("SCHOOL_TASK_CONTEXT_READ_FAILED")
                 warnings.append(
-                    "School notes/status could not be read; Canvas assignments used their source state"
+                    "School progress couldn't refresh; recently completed tasks may still appear."
                 )
         if self.notion_delivery is not None and not master_layout:
             try:
@@ -487,10 +508,21 @@ class DailyBriefOrchestrator:
                         }
                     )
             except Exception:
-                warnings.append("Today's Plan status could not be read; source tasks were unchanged")
+                diagnostics.append("DAILY_PLAN_CONTEXT_READ_FAILED")
+                warnings.append(
+                    "Today's progress couldn't refresh; completed tasks may still appear."
+                )
         if calendar:
             warnings.extend(calendar.warnings)
-        return SourceBundle(canvas, notion, calendar, statuses, warnings, errors)
+        return SourceBundle(
+            canvas=canvas,
+            notion=notion,
+            calendar=calendar,
+            statuses=statuses,
+            warnings=warnings,
+            errors=errors,
+            diagnostics=diagnostics,
+        )
 
     def _merge_canvas_observations(
         self, state: DailyBriefState, canvas: CanvasEnvelope, observed_at: datetime
@@ -854,7 +886,8 @@ class DailyBriefOrchestrator:
             f"canvas={bundle.statuses['canvas']} notion={bundle.statuses['notion']} "
             f"calendar={bundle.statuses['calendar']} guidance={'prepared' if unchanged else 'deterministic'} "
             f"telegram={status} diff={'unchanged' if unchanged else 'changed'} "
-            f"canvas_error={bundle.errors.get('canvas', 'none')}\n"
+            f"canvas_error={bundle.errors.get('canvas', 'none')} "
+            f"diagnostics={','.join(value.split()[0] for value in bundle.diagnostics) or 'none'}\n"
         )
         atomic_write_text(log_path, prior_log + line)
         return text, status, state

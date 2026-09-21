@@ -518,7 +518,9 @@ def test_partial_canvas_response_retains_compatible_cached_assignments(tmp_path:
     )
     bundle = orchestrator.fetch_sources(partial, TARGET, write_cache=False)
     assert [item.key for item in bundle.canvas.assignments] == ["assignment:101"]
-    assert any("retained compatible cached" in value for value in bundle.canvas.data_warnings)
+    assert not any("retained compatible cached" in value for value in bundle.warnings)
+    assert not any("retained compatible cached" in value for value in bundle.canvas.data_warnings)
+    assert any("CANVAS_PARTIAL_CACHE_MERGE" in value for value in bundle.diagnostics)
 
 
 def test_canvas_failure_uses_recent_cross_date_cache_with_error_code(tmp_path: Path) -> None:
@@ -543,7 +545,8 @@ def test_canvas_failure_uses_recent_cross_date_cache_with_error_code(tmp_path: P
     assert bundle.canvas is not None
     assert bundle.statuses["canvas"] == "stale"
     assert bundle.errors["canvas"] == "MICROSOFT_CREDENTIALS_REJECTED"
-    assert any("may omit recent changes" in warning for warning in bundle.warnings)
+    assert any("plan may be missing recent changes" in warning for warning in bundle.warnings)
+    assert any("CANVAS_STALE_CACHE" in value for value in bundle.diagnostics)
 
 
 def test_canvas_failure_rejects_cross_date_cache_older_than_72_hours(
