@@ -381,7 +381,9 @@ def classify(
             verify.append(raw)
             verify_keys.add(raw.key)
     classified.extend(
-        _classify_notion(raw, target_date, as_of, timezone_name) for raw in notion_items
+        _classify_notion(raw, target_date, as_of, timezone_name)
+        for raw in notion_items
+        if not raw.name.strip().casefold().startswith("example:")
     )
     assessment_events: dict[str, PlannerEvent] = {}
     for event in planner_rows:

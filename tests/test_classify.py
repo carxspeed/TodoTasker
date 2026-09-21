@@ -197,6 +197,24 @@ def test_past_due_nonassessment_can_still_be_actionable() -> None:
     assert result.verify == []
 
 
+def test_example_notion_rows_are_templates_not_real_plan_items() -> None:
+    example = notion_item(
+        "notion:example",
+        deadline=TARGET,
+        effort="S",
+    ).model_copy(update={"name": "Example: Review class notes"})
+    real = notion_item(
+        "notion:real",
+        deadline=TARGET,
+        effort="S",
+    ).model_copy(update={"name": "Review class notes"})
+
+    result = run(notion=[example, real])
+
+    selected = [*result.must, *result.smart, *result.may]
+    assert [item.key for item in selected] == [real.key]
+
+
 def test_notion_null_cadence_without_deadline_is_may() -> None:
     result = run(notion=[notion_item("notion:a")])
     assert selected_tier(result, "notion:a") == "may"
