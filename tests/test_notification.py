@@ -103,3 +103,16 @@ def test_exact_notion_urls_replace_source_links_and_follow_aliases() -> None:
     )
 
     assert linked.primary and linked.primary.url == "https://notion.test/quiz-row"
+
+
+def test_notification_converts_utc_deadline_to_the_users_local_date() -> None:
+    item = task("assignment:late", "Late assignment").model_copy(
+        update={"due_at": datetime(2026, 9, 9, 4, 0, tzinfo=timezone.utc)}
+    )
+
+    result = build_daily_notification(classification([item]))
+
+    assert result.primary is not None
+    assert result.primary.due_at == datetime(
+        2026, 9, 8, 21, 0, tzinfo=ZoneInfo("America/Los_Angeles")
+    )

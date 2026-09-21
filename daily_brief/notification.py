@@ -34,7 +34,10 @@ def _bounded(value: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 3].rstrip() + "..."
 
 
-def _notification_task(item, guidance_by_key: dict[str, str]) -> NotificationTask:
+def _notification_task(item, guidance_by_key: dict[str, str], local_timezone) -> NotificationTask:
+    due_at = item.due_at
+    if due_at is not None and local_timezone is not None:
+        due_at = due_at.astimezone(local_timezone)
     return NotificationTask(
         key=item.key,
         name=item.name,
@@ -42,7 +45,7 @@ def _notification_task(item, guidance_by_key: dict[str, str]) -> NotificationTas
         next_step=_bounded(
             guidance_by_key.get(item.key) or deterministic_guidance(item), 160
         ),
-        due_at=item.due_at,
+        due_at=due_at,
         effort_hours=item.effort_hours,
         kind=item.kind,
         url=item.url,
@@ -116,7 +119,10 @@ def build_daily_notification(
         if guidance
         else {}
     )
-    tasks = [_notification_task(item, guidance_by_key) for item in focus[:3]]
+    tasks = [
+        _notification_task(item, guidance_by_key, classification.as_of.tzinfo)
+        for item in focus[:3]
+    ]
     return DailyNotification(
         target_date=classification.target_date,
         primary=tasks[0] if tasks else None,
