@@ -373,6 +373,9 @@ powershell -ExecutionPolicy Bypass -File scripts\install-scheduled-tasks.ps1
 
 The installer defines:
 
+Scheduled jobs use windowless Python, so they do not open Command Prompt windows.
+Their output is retained in `state\scheduled-logs` for troubleshooting.
+
 | Task | Trigger | Command |
 |---|---:|---|
 | Daily Brief - Canvas Auth Check | 8:30 PM | `canvas.py auth-check --notify` |

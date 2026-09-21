@@ -6,38 +6,52 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $ProjectRoot = 'C:\Users\ardaa\Documents\TodoTasker'
-$Python = Join-Path $ProjectRoot 'venv\Scripts\python.exe'
+$Python = Join-Path $ProjectRoot 'venv\Scripts\pythonw.exe'
+$Runner = Join-Path $ProjectRoot 'scripts\run-scheduled.pyw'
 $UserId = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+
+if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
+    throw "Windowless Python was not found at $Python"
+}
+if (-not (Test-Path -LiteralPath $Runner -PathType Leaf)) {
+    throw "The hidden scheduled-task runner was not found at $Runner"
+}
 
 $Definitions = @(
     @{
         Name = 'Daily Brief - Canvas Auth Check'
-        Arguments = '"C:\Users\ardaa\Documents\TodoTasker\canvas.py" auth-check --notify'
+        EntryPoint = 'canvas.py'
+        Arguments = 'auth-check --notify'
         TriggerSpecs = @(@{ Type = 'Daily'; At = '20:30' })
     },
     @{
         Name = 'Daily Brief - Evening Check-in'
-        Arguments = '"C:\Users\ardaa\Documents\TodoTasker\checkin.py" send'
+        EntryPoint = 'checkin.py'
+        Arguments = 'send'
         TriggerSpecs = @(@{ Type = 'Daily'; At = '21:00' })
     },
     @{
         Name = 'Daily Brief - Process Check-in'
-        Arguments = '"C:\Users\ardaa\Documents\TodoTasker\checkin.py" process'
+        EntryPoint = 'checkin.py'
+        Arguments = 'process'
         TriggerSpecs = @(@{ Type = 'Daily'; At = '21:30' })
     },
     @{
         Name = 'Daily Brief - Prepare'
-        Arguments = '"C:\Users\ardaa\Documents\TodoTasker\brief.py" prepare'
+        EntryPoint = 'brief.py'
+        Arguments = 'prepare'
         TriggerSpecs = @(@{ Type = 'Daily'; At = '21:50' })
     },
     @{
         Name = 'Daily Brief - Deliver'
-        Arguments = '"C:\Users\ardaa\Documents\TodoTasker\brief.py" deliver'
+        EntryPoint = 'brief.py'
+        Arguments = 'deliver'
         TriggerSpecs = @(@{ Type = 'Daily'; At = '06:30' })
     },
     @{
         Name = 'Daily Brief - Watchdog'
-        Arguments = '"C:\Users\ardaa\Documents\TodoTasker\brief.py" watchdog'
+        EntryPoint = 'brief.py'
+        Arguments = 'watchdog'
         TriggerSpecs = @(
             @{ Type = 'Daily'; At = '07:30' }
             @{ Type = 'LogOn' }
@@ -64,7 +78,8 @@ foreach ($Definition in $Definitions) {
     $TriggerSummary = ($Definition.TriggerSpecs | ForEach-Object {
         if ($_.Type -eq 'Daily') { "daily $($_.At)" } else { 'at logon' }
     }) -join ', '
-    Write-Host "$($Definition.Name) [$TriggerSummary]: $Python $($Definition.Arguments)"
+    $ActionArguments = '"{0}" {1} {2}' -f $Runner, $Definition.EntryPoint, $Definition.Arguments
+    Write-Host "$($Definition.Name) [$TriggerSummary]: $Python $ActionArguments"
     if ($Apply) {
         $Triggers = @($Definition.TriggerSpecs | ForEach-Object {
             if ($_.Type -eq 'Daily') {
@@ -75,7 +90,7 @@ foreach ($Definition in $Definitions) {
         })
         $Action = New-ScheduledTaskAction `
             -Execute $Python `
-            -Argument $Definition.Arguments `
+            -Argument $ActionArguments `
             -WorkingDirectory $ProjectRoot
         Register-ScheduledTask `
             -TaskName $Definition.Name `

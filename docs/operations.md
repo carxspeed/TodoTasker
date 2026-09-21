@@ -84,6 +84,9 @@ Six proposed tasks use the full project-local Python path and current repository
 | Daily Brief - Deliver | 06:30 | `venv\Scripts\python.exe brief.py deliver` |
 | Daily Brief - Watchdog | 07:30 and logon | `venv\Scripts\python.exe brief.py watchdog` |
 
+Installed tasks run through `pythonw.exe` and `scripts\run-scheduled.pyw`, so no
+console window appears. Per-command output is written under `state\scheduled-logs`.
+
 Every task is interactive-user only, starts as soon as possible after a missed trigger,
 wakes the computer, is allowed to start and continue on battery power, and retries a
 nonzero exit three times at ten-minute intervals. The commands enforce their own
