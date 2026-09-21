@@ -173,6 +173,30 @@ def test_urgent_unknown_submission_is_verify_and_never_must() -> None:
     assert result.dropped_count == 0
 
 
+def test_past_due_quiz_is_verify_only_even_when_canvas_says_unsubmitted() -> None:
+    quiz = canvas_item("assignment:9", due_hours=-48).model_copy(
+        update={"name": "Quiz 1", "kind": "quiz"}
+    )
+
+    result = run([quiz])
+
+    assert [item.key for item in result.verify] == [quiz.key]
+    assert not result.must
+    assert not result.smart
+    assert not result.may
+
+
+def test_past_due_nonassessment_can_still_be_actionable() -> None:
+    worksheet = canvas_item("assignment:10", due_hours=-48).model_copy(
+        update={"name": "Chapter worksheet"}
+    )
+
+    result = run([worksheet])
+
+    assert [item.key for item in result.must] == [worksheet.key]
+    assert result.verify == []
+
+
 def test_notion_null_cadence_without_deadline_is_may() -> None:
     result = run(notion=[notion_item("notion:a")])
     assert selected_tier(result, "notion:a") == "may"

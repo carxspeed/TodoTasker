@@ -270,7 +270,11 @@ def school_assignment_fields(
     details = details or {}
     status = (
         "Verify"
-        if assignment.needs_confirmation or assignment.submission_status == "unknown"
+        if (
+            assignment.needs_confirmation
+            or assignment.submission_status == "unknown"
+            or details.get("Priority") == "Verify"
+        )
         else "To do"
     )
     instructions = _bounded(

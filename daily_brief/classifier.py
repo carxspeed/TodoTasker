@@ -28,6 +28,11 @@ TASK_CAPS = {"low": 3, "normal": 6, "high": 8}
 HOUR_CAPS = {"low": 1.5, "normal": 3.5, "high": 6.0}
 CADENCE_DAYS = {"Daily": 1.0, "2x/week": 3.5, "Weekly": 7.0, "Biweekly": 14.0}
 TIER_SCORE = {"may": 0, "smart": 1, "must": 2}
+ASSESSMENT_RE = re.compile(
+    r"\b(?:quiz(?:zes)?|test|exam(?:ination)?|assessment|mcq|multiple[ -]choice|"
+    r"frq|free[ -]response|timed[ -](?:write|writing|essay)|midterm|final)\b",
+    re.IGNORECASE,
+)
 
 
 def _canvas_effort(points: float | None, override: str | None) -> tuple[str, str]:
@@ -63,10 +68,18 @@ def _classify_canvas(
 ) -> tuple[ClassifiedItem, bool]:
     effort, effort_source = _canvas_effort(item.points, effort_overrides.get(item.key))
     delta = _deadline_delta(item.due_at, as_of)
+    past_assessment = (
+        delta is not None
+        and delta < timedelta(0)
+        and bool(ASSESSMENT_RE.search(item.name))
+    )
     urgent_verify = (
-        item.submission_status == "unknown"
-        and delta is not None
-        and delta <= timedelta(hours=24)
+        past_assessment
+        or (
+            item.submission_status == "unknown"
+            and delta is not None
+            and delta <= timedelta(hours=24)
+        )
     )
     if item.submission_status == "unknown":
         tier = "smart"

@@ -117,6 +117,17 @@ def test_school_assignment_payload_includes_source_id_and_safe_next_step() -> No
     assert payload["Due"]["date"]["start"] == assignment.due_at.isoformat()
 
 
+def test_classifier_verify_priority_marks_notion_row_for_confirmation() -> None:
+    assignment = load_fixture("fixtures/sample_todo.json").assignments[0].model_copy(
+        update={"submission_status": "unsubmitted", "needs_confirmation": False}
+    )
+
+    fields = school_assignment_fields(assignment, {"Priority": "Verify"})
+
+    assert fields["Status"] == "Verify"
+    assert fields["Priority"] == "Verify"
+
+
 def test_school_instructions_use_short_summary_and_keep_source_out_of_view() -> None:
     assignment = load_fixture("fixtures/sample_todo.json").assignments[0]
     assignment.description = "First requirement. Second requirement. " + "Raw detail " * 100
