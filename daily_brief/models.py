@@ -253,6 +253,42 @@ class GuidanceResult(Contract):
     focus: FocusPlan | None = None
 
 
+class NotificationTask(Contract):
+    """One compact, actionable task shown in a delivery channel."""
+
+    key: str
+    name: str = Field(min_length=1, max_length=500)
+    course: str = Field(default="", max_length=200)
+    next_step: str = Field(min_length=1, max_length=160)
+    due_at: AwareDatetime | None = None
+    effort_hours: float = Field(gt=0)
+    kind: str = ""
+    url: str = ""
+
+
+class NotificationReminder(Contract):
+    """A non-task event that should remain visible without taking focus."""
+
+    title: str = Field(min_length=1, max_length=200)
+    course: str = Field(default="", max_length=200)
+    date: date
+    text: str = Field(default="", max_length=160)
+    url: str = ""
+
+
+class DailyNotification(Contract):
+    """Phone-first view of the plan; the detailed brief remains a separate artifact."""
+
+    target_date: date
+    primary: NotificationTask | None = None
+    followups: list[NotificationTask] = Field(default_factory=list, max_length=2)
+    reminders: list[NotificationReminder] = Field(default_factory=list, max_length=2)
+    backlog_count: int = Field(default=0, ge=0)
+    verify_count: int = Field(default=0, ge=0)
+    notice: str = Field(default="", max_length=180)
+    focus_reason: str = Field(default="", max_length=240)
+
+
 class PreparedSources(Contract):
     canvas: CanvasEnvelope | None = None
     notion: list[NotionWorkItem] | None = None

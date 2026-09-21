@@ -45,7 +45,7 @@ def _render_task(
     return lines
 
 
-def _focus_items(
+def select_focus_items(
     classification: ClassificationOutput, guidance: GuidanceResult | None
 ) -> tuple[list[ClassifiedItem], str]:
     """Keep the delivered brief humane while the full source tables remain intact."""
@@ -98,7 +98,7 @@ def render_brief(
     } if guidance else {}
     if guidance and guidance.overview:
         lines.extend(["", guidance.overview])
-    focus_items, focus_reason = _focus_items(classification, guidance)
+    focus_items, focus_reason = select_focus_items(classification, guidance)
     if focus_items:
         lines.extend(["", "Today's focus"])
         primary = focus_items[0]
