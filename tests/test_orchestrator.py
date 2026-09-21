@@ -563,6 +563,28 @@ def test_partial_canvas_response_retains_compatible_cached_assignments(tmp_path:
     assert any("CANVAS_PARTIAL_CACHE_MERGE" in value for value in bundle.diagnostics)
 
 
+def test_partial_announcements_do_not_restore_completed_cached_assignments(
+    tmp_path: Path,
+) -> None:
+    orchestrator = make_orchestrator(tmp_path)
+    full = Provider()
+    orchestrator.fetch_sources(full, TARGET, write_cache=True)
+    fresh = Provider()
+    fresh.canvas = fresh.canvas.model_copy(
+        update={
+            "assignments": [],
+            "source_status": fresh.canvas.source_status.model_copy(
+                update={"announcements": "partial"}
+            ),
+        }
+    )
+
+    bundle = orchestrator.fetch_sources(fresh, TARGET, write_cache=False)
+
+    assert bundle.canvas.assignments == []
+    assert any("CANVAS_PARTIAL_CACHE_MERGE" in value for value in bundle.diagnostics)
+
+
 def test_canvas_failure_uses_recent_cross_date_cache_with_error_code(tmp_path: Path) -> None:
     orchestrator = make_orchestrator(tmp_path)
     prior = Provider()

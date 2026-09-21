@@ -268,9 +268,12 @@ class DailyBriefOrchestrator:
         try:
             canvas = provider.fetch_canvas(target_date)
             statuses["canvas"] = "live"
-            partial = (
+            assignments_partial = (
                 canvas.source_status.planner_items == "failed"
                 or canvas.source_status.missing_submissions == "failed"
+            )
+            partial = (
+                assignments_partial
                 or canvas.source_status.courses == "failed"
                 or canvas.source_status.announcements != "ok"
             )
@@ -279,15 +282,24 @@ class DailyBriefOrchestrator:
             ) if partial else None
             if prior:
                 cached_canvas, cached_at = prior
-                assignments = {item.key: item for item in cached_canvas.assignments}
-                assignments.update({item.key: item for item in canvas.assignments})
                 updates: dict[str, Any] = {
-                    "assignments": sorted(
-                        assignments.values(),
-                        key=lambda item: (item.due_at is None, item.due_at, item.key),
-                    ),
                     "data_warnings": list(canvas.data_warnings),
                 }
+                if assignments_partial:
+                    assignments = {
+                        item.key: item for item in cached_canvas.assignments
+                    }
+                    assignments.update(
+                        {item.key: item for item in canvas.assignments}
+                    )
+                    updates["assignments"] = sorted(
+                        assignments.values(),
+                        key=lambda item: (
+                            item.due_at is None,
+                            item.due_at,
+                            item.key,
+                        ),
+                    )
                 diagnostics.append(
                     "CANVAS_PARTIAL_CACHE_MERGE "
                     f"cached_at={cached_at.isoformat()}"

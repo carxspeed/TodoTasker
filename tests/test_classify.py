@@ -173,14 +173,14 @@ def test_urgent_unknown_submission_is_verify_and_never_must() -> None:
     assert result.dropped_count == 0
 
 
-def test_past_due_quiz_is_verify_only_even_when_canvas_says_unsubmitted() -> None:
+def test_past_due_quiz_is_omitted_even_when_canvas_says_unsubmitted() -> None:
     quiz = canvas_item("assignment:9", due_hours=-48).model_copy(
         update={"name": "Quiz 1", "kind": "quiz"}
     )
 
     result = run([quiz])
 
-    assert [item.key for item in result.verify] == [quiz.key]
+    assert result.verify == []
     assert not result.must
     assert not result.smart
     assert not result.may

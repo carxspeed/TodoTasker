@@ -375,6 +375,12 @@ def classify(
     for raw in canvas_rows:
         if raw.key in same_day_assessment_keys:
             continue
+        if (
+            raw.due_at is not None
+            and raw.due_at <= as_of
+            and ASSESSMENT_RE.search(raw.name)
+        ):
+            continue
         item, urgent_verify = _classify_canvas(raw, as_of, overrides)
         classified.append(item)
         if urgent_verify:

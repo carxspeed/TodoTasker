@@ -945,18 +945,93 @@ def planner_item_is_complete(item: dict[str, Any]) -> bool:
         return True
     if submissions.get("missing") is True:
         return False
-    return any(
+    if any(
         submissions.get(name) is True
         for name in ("graded", "with_feedback", "needs_grading")
+    ):
+        return True
+    plannable = item.get("plannable") or item.get("assignment") or item
+    return (
+        submissions.get("submitted") is not False
+        and submission_has_full_credit(
+            submissions, plannable.get("points_possible")
+        )
     )
 
 
-def todo_submission_complete(submission: dict[str, Any]) -> bool:
-    return submission.get("excused") is True or submission.get("workflow_state") in {
-        "submitted",
-        "graded",
-        "pending_review",
-    }
+def _numeric(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        candidate = value.strip().removesuffix("%").strip()
+        try:
+            return float(candidate)
+        except ValueError:
+            return None
+    return None
+
+
+def submission_has_full_credit(
+    submission: dict[str, Any], points_possible: float | None
+) -> bool:
+    score = _numeric(submission.get("score"))
+    possible = _numeric(points_possible)
+    if score is not None and possible is not None and possible > 0:
+        return score >= possible
+    grade = submission.get("grade")
+    return (
+        isinstance(grade, str)
+        and grade.strip().endswith("%")
+        and (_numeric(grade) or 0) >= 100
+    )
+
+
+def todo_submission_complete(
+    submission: dict[str, Any], points_possible: float | None = None
+) -> bool:
+    """Prefer explicit submission state; use full credit only when state is ambiguous."""
+    if submission.get("excused") is True:
+        return True
+    if submission.get("missing") is True:
+        return False
+    if submission.get("submitted") is True or submission.get("submitted_at"):
+        return True
+    if submission.get("submitted") is False:
+        return False
+    workflow = str(submission.get("workflow_state") or "").casefold()
+    if workflow in {"submitted", "pending_review"}:
+        return True
+    if workflow in {"unsubmitted", "new"}:
+        return False
+    return submission_has_full_credit(submission, points_possible)
+
+
+def remove_completed_assignments(
+    request,
+    base_url: str,
+    assignments: Iterable[CanvasAssignment],
+) -> list[CanvasAssignment]:
+    """Check each Canvas submission record before an assignment reaches planning."""
+    kept: list[CanvasAssignment] = []
+    base = base_url.rstrip("/")
+    for assignment in assignments:
+        if assignment.assignment_id is None:
+            kept.append(assignment)
+            continue
+        try:
+            submission = _get_object(
+                request,
+                f"{base}/api/v1/courses/{assignment.course_id}/assignments/"
+                f"{assignment.assignment_id}/submissions/self",
+            )
+        except CanvasError:
+            kept.append(assignment)
+            continue
+        if not todo_submission_complete(submission, assignment.points):
+            kept.append(assignment)
+    return kept
 
 
 def _aware_or_none(value: Any) -> datetime | None:
@@ -1064,7 +1139,9 @@ def normalize_assignment_sources(
         raw_assignment = item.get("assignment") or item
         assignment_id = raw_assignment.get("id")
         submission = (todo_submissions or {}).get(int(assignment_id)) if assignment_id else None
-        if isinstance(submission, dict) and todo_submission_complete(submission):
+        if isinstance(submission, dict) and todo_submission_complete(
+            submission, raw_assignment.get("points_possible")
+        ):
             continue
         unknown = not isinstance(submission, dict)
         try:
@@ -1396,6 +1473,7 @@ def fetch_live(
         for assignment in normalized.assignments
         if assignment.course_id not in excluded
     ]
+    assignments = remove_completed_assignments(request, base, assignments)
     assignments, detail_warnings = enrich_assignment_details(request, base, assignments)
     assignments = mark_overdue_on_paper_for_verification(assignments, observation_time)
     warnings.extend(detail_warnings)

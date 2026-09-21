@@ -21,6 +21,7 @@ from daily_brief.canvas import (
     open_saved_canvas_context,
     paginate,
     planner_item_is_complete,
+    remove_completed_assignments,
     save_canvas_session,
     stable_identity,
     todo_submission_complete,
@@ -883,6 +884,36 @@ def test_submission_filters_do_not_use_course_wide_flag() -> None:
     ) is True
     assert todo_submission_complete({"workflow_state": "pending_review"}) is True
     assert todo_submission_complete({"workflow_state": "pending-review"}) is False
+    assert todo_submission_complete(
+        {"workflow_state": "graded", "missing": True, "score": 0}, 10
+    ) is False
+    assert todo_submission_complete({"score": 10}, 10) is True
+    assert todo_submission_complete({"submitted": False, "score": 10}, 10) is False
+
+
+def test_submission_recheck_removes_full_credit_but_keeps_unsubmitted_zero() -> None:
+    base = load_fixture("fixtures/sample_todo.json").assignments[0]
+    full_credit = base.model_copy(
+        update={"key": "assignment:1", "assignment_id": 1, "points": 10}
+    )
+    zero = base.model_copy(
+        update={"key": "assignment:2", "assignment_id": 2, "points": 10}
+    )
+
+    class Request:
+        def get(self, url, **_kwargs):
+            if "/assignments/1/" in url:
+                return Response(200, {"score": 10})
+            return Response(
+                200,
+                {"workflow_state": "graded", "missing": True, "score": 0},
+            )
+
+    kept = remove_completed_assignments(
+        Request(), "https://canvas.test", [full_credit, zero]
+    )
+
+    assert [item.key for item in kept] == [zero.key]
 
 
 def test_missing_union_keeps_unknown_locked_item_in_verify_path() -> None:
