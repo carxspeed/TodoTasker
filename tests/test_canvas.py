@@ -875,6 +875,12 @@ def test_submission_filters_do_not_use_course_wide_flag() -> None:
     }
     assert planner_item_is_complete(item) is False
     assert planner_item_is_complete({"submissions": {"submitted": True}}) is True
+    assert planner_item_is_complete(
+        {"submissions": {"submitted": False, "graded": True, "missing": False}}
+    ) is True
+    assert planner_item_is_complete(
+        {"submissions": {"submitted": False, "excused": True, "missing": True}}
+    ) is True
     assert todo_submission_complete({"workflow_state": "pending_review"}) is True
     assert todo_submission_complete({"workflow_state": "pending-review"}) is False
 

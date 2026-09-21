@@ -941,12 +941,14 @@ def planner_item_is_complete(item: dict[str, Any]) -> bool:
         return False
     if submissions.get("submitted") is True:
         return True
-    if "submitted" not in submissions and submissions.get("missing") is not True:
-        return any(
-            submissions.get(name) is True
-            for name in ("graded", "with_feedback", "needs_grading", "excused")
-        )
-    return False
+    if submissions.get("excused") is True:
+        return True
+    if submissions.get("missing") is True:
+        return False
+    return any(
+        submissions.get(name) is True
+        for name in ("graded", "with_feedback", "needs_grading")
+    )
 
 
 def todo_submission_complete(submission: dict[str, Any]) -> bool:
