@@ -22,6 +22,15 @@ def _in_window(now_time: time, start: time, end: time) -> bool:
     return now_time >= start or now_time <= end
 
 
+def _canvas_is_authoritative(canvas) -> bool:
+    """Only retire stale Canvas rows after every assignment source succeeded."""
+    return (
+        canvas.source_status.planner_items == "ok"
+        and canvas.source_status.missing_submissions == "ok"
+        and canvas.source_status.courses == "ok"
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -94,6 +103,7 @@ def _run_notion_migration(
         notion_snapshot.items,
         user_context_by_key=legacy_context,
         excluded_course_ids=settings.canvas_excluded_course_ids,
+        authoritative_canvas=_canvas_is_authoritative(canvas),
     )
     print(f"master_database_id={result.database_id}")
     print(f"database_created={str(result.database_created).lower()}")
