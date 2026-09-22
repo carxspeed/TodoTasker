@@ -25,6 +25,7 @@ from daily_brief.canvas import (
     save_canvas_session,
     stable_identity,
     todo_submission_complete,
+    _get_object,
     _trusted_microsoft_login_url,
     verify_session,
     window_planner_html,
@@ -828,6 +829,38 @@ def test_pagination_rejects_repeated_next_url() -> None:
 
     with pytest.raises(CanvasError, match="repeated"):
         paginate(get, "https://canvas.test/api")
+
+
+def test_get_object_retries_transient_connection_failure() -> None:
+    calls = 0
+    delays = []
+
+    class Request:
+        def get(self, *args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("request headers contained a sensitive cookie")
+            return Response(200, {"id": 42})
+
+    assert _get_object(Request(), "https://canvas.test/api", sleep=delays.append) == {
+        "id": 42
+    }
+    assert calls == 2
+    assert delays == [1]
+
+
+def test_get_object_sanitizes_persistent_connection_failure() -> None:
+    class Request:
+        def get(self, *args, **kwargs):
+            raise RuntimeError("cookie=do-not-log-this")
+
+    with pytest.raises(CanvasError) as failure:
+        _get_object(Request(), "https://canvas.test/api", sleep=lambda _: None)
+
+    assert failure.value.code == "CANVAS_TEMPORARY_FAILURE"
+    assert "do-not-log-this" not in str(failure.value)
+    assert failure.value.__cause__ is None
 
 
 def test_session_classification_is_precise() -> None:

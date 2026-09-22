@@ -460,6 +460,26 @@ def _response_json(response, *, expected: type, session_check: bool = False) -> 
     return body
 
 
+def _request_get(
+    request,
+    url: str,
+    *,
+    params: dict[str, Any] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+):
+    """Retry transient transport failures without exposing request headers."""
+    for attempt in range(1, 4):
+        try:
+            return request.get(url, params=params, timeout=30_000)
+        except Exception:
+            if attempt == 3:
+                raise CanvasError(
+                    "CANVAS_TEMPORARY_FAILURE", "Canvas connection failed"
+                ) from None
+            sleep(2 ** (attempt - 1))
+    raise AssertionError("Canvas request retry loop exited unexpectedly")
+
+
 def verify_session(request, base_url: str) -> dict[str, Any]:
     try:
         response = request.get(f"{base_url.rstrip('/')}/api/v1/users/self", timeout=30_000)
@@ -856,10 +876,15 @@ def _download_attachment_text(request, base: str, file_id: int) -> tuple[str, st
     download_url = str(metadata.get("url") or "")
     if urlparse(download_url).scheme != "https":
         raise ValueError("attachment has no safe download URL")
-    response = request.get(download_url, timeout=30_000)
+    response = _request_get(request, download_url)
     if int(response.status) >= 400:
         raise ValueError(f"attachment download returned HTTP {response.status}")
-    payload = response.body()
+    try:
+        payload = response.body()
+    except Exception:
+        raise CanvasError(
+            "CANVAS_TEMPORARY_FAILURE", "Canvas attachment download failed"
+        ) from None
     if len(payload) > MAX_ATTACHMENT_BYTES:
         raise ValueError("attachment exceeds the 5 MB extraction limit")
     return filename, extract_document_text(payload, filename, content_type)
@@ -1382,8 +1407,14 @@ def window_planner_html(
     )
 
 
-def _get_object(request, url: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-    response = request.get(url, params=params, timeout=30_000)
+def _get_object(
+    request,
+    url: str,
+    params: dict[str, Any] | None = None,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
+    response = _request_get(request, url, params=params, sleep=sleep)
     return _response_json(response, expected=dict)
 
 
