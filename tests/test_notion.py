@@ -19,6 +19,7 @@ from daily_brief.notion import (
     rich_text_property,
     master_task_properties,
     master_task_schema,
+    master_view_specs,
     notion_master_task_fields,
     school_assignment_fields,
     school_database_schema,
@@ -112,6 +113,34 @@ def test_display_type_is_human_meaningful_instead_of_raw_canvas_kind() -> None:
     assert display_task_type("Federalist essay", "assignment") == "Essay / Writing"
     assert display_task_type("Teach Me Project", "assignment") == "Project"
     assert display_task_type("Call advisor", "Task", source_type="Notion") == "Personal task"
+
+
+def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
+    property_ids = {
+        name: f"id-{index}" for index, name in enumerate(master_task_schema(), start=1)
+    }
+    specs = {spec["name"]: spec for spec in master_view_specs(property_ids)}
+
+    assert {
+        "Active tasks",
+        "Today",
+        "School",
+        "Work",
+        "Connections",
+        "Misc",
+        "Needs attention",
+        "Submitted / waiting",
+        "History",
+        "_System",
+    } == set(specs)
+    active = specs["Active tasks"]
+    columns = active["configuration"]["properties"]
+    by_id = {column["property_id"]: column for column in columns}
+    assert by_id[property_ids["Next step"]]["width"] == 420
+    assert by_id[property_ids["Instructions"]]["width"] == 420
+    assert by_id[property_ids["Focus rank"]]["visible"] is False
+    assert by_id[property_ids["Source ID"]]["visible"] is False
+    assert specs["School"]["configuration"]["group_by"]["property_id"] == property_ids["Course"]
 
 
 def test_school_assignment_payload_includes_source_id_and_safe_next_step() -> None:
@@ -787,6 +816,54 @@ def test_ensure_database_properties_adds_only_missing_properties() -> None:
     assert http.calls[1][0:2] == ("PATCH", "https://api.notion.com/v1/databases/db")
     assert http.calls[1][2]["json"] == {"properties": schema}
     assert client.ensure_database_properties("db", schema) is False
+
+
+def test_view_api_uses_current_version_and_decodes_property_ids() -> None:
+    http = FakeHttp(
+        [
+            {"data_sources": [{"id": "source"}]},
+            {
+                "properties": {
+                    "Task": {"id": "title", "type": "title"},
+                    "Due": {"id": "%5EuQv", "type": "date"},
+                }
+            },
+            {"id": "view", "url": "https://notion.test/view"},
+            {"id": "view", "url": "https://notion.test/view"},
+        ]
+    )
+    client = NotionClient("token", "", http=http)
+
+    source_id, property_ids = client.master_property_ids("database")
+    created = client.create_view(
+        "database",
+        source_id,
+        {
+            "name": "Active tasks",
+            "type": "table",
+            "filter": None,
+            "position": {"type": "start"},
+        },
+    )
+    client.update_view(
+        "view",
+        {
+            "name": "Active tasks",
+            "type": "table",
+            "position": {"type": "start"},
+        },
+    )
+
+    assert source_id == "source"
+    assert property_ids["Due"] == "^uQv"
+    assert created["id"] == "view"
+    assert all(
+        call[2]["headers"]["Notion-Version"] == "2026-03-11"
+        for call in http.calls
+    )
+    assert http.calls[2][2]["json"]["database_id"] == "database"
+    assert "type" not in http.calls[3][2]["json"]
+    assert "position" not in http.calls[3][2]["json"]
 
 
 def test_named_task_database_creation_and_archive_payloads() -> None:

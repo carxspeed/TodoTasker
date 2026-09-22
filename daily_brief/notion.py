@@ -8,6 +8,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Iterable
+from urllib.parse import unquote
 
 from .http import HttpClient, HttpFailure
 from .models import DailyNotification, NotionWorkItem, NotificationTask
@@ -15,6 +16,7 @@ from .models import DailyNotification, NotionWorkItem, NotificationTask
 
 NOTION_API = "https://api.notion.com/v1"
 NOTION_VERSION = "2022-06-28"
+NOTION_VIEW_VERSION = "2026-03-11"
 TASK_DATABASES = ("Work", "School", "Connections", "Misc")
 TYPES = ["Project", "Task", "Recurring"]
 CADENCES = ["Daily", "2x/week", "Weekly", "Biweekly", "None"]
@@ -97,6 +99,7 @@ class MasterTaskSyncResult:
     rows_unchanged: int = 0
     rows_archived: int = 0
     task_urls: dict[str, str] = field(default_factory=dict)
+    view_urls: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -290,6 +293,278 @@ def display_task_type(name: str, kind: str = "", *, source_type: str = "Canvas")
     if kind == "calendar_event":
         return "Event"
     return "Homework"
+
+
+def _view_filter(property_id: str, kind: str, operator: str, value: Any) -> dict[str, Any]:
+    return {"property": property_id, kind: {operator: value}}
+
+
+def master_view_specs(property_ids: dict[str, str]) -> list[dict[str, Any]]:
+    """Return the idempotent human-facing view design for the master task data."""
+    required = set(master_task_schema())
+    missing = required - set(property_ids)
+    if missing:
+        raise NotionError(
+            "Tasks database is missing view properties: " + ", ".join(sorted(missing))
+        )
+
+    def active_filter(*extra: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "and": [
+                _view_filter(property_ids["Archived"], "checkbox", "equals", False),
+                *(
+                    _view_filter(
+                        property_ids["Status"], "select", "does_not_equal", status
+                    )
+                    for status in NON_ACTIONABLE_STATUSES
+                ),
+                *extra,
+            ]
+        }
+
+    table_visible = [
+        ("Task", 260, True),
+        ("Open", 80, False),
+        ("Status", 110, False),
+        ("Course", 150, True),
+        ("Display type", 115, False),
+        ("Due", 145, False),
+        ("Priority", 90, False),
+        ("Next step", 420, True),
+        ("Notes / progress", 320, True),
+        ("Instructions", 420, True),
+        ("Last touched", 120, False),
+    ]
+
+    def properties(
+        visible: list[str] | None = None, *, table: bool = False
+    ) -> list[dict[str, Any]]:
+        visible = visible or []
+        configured: list[dict[str, Any]] = []
+        emitted: set[str] = set()
+        if table:
+            for name, width, wrap in table_visible:
+                configured.append(
+                    {
+                        "property_id": property_ids[name],
+                        "visible": True,
+                        "width": width,
+                        "wrap": wrap,
+                    }
+                )
+                emitted.add(name)
+        else:
+            for name in visible:
+                configured.append(
+                    {"property_id": property_ids[name], "visible": True}
+                )
+                emitted.add(name)
+        for name in property_ids:
+            if name not in emitted:
+                configured.append(
+                    {"property_id": property_ids[name], "visible": False}
+                )
+        return configured
+
+    active_sorts = [
+        {"property": property_ids["Sort order"], "direction": "ascending"},
+        {"property": property_ids["Due"], "direction": "ascending"},
+        {"property": property_ids["Course"], "direction": "ascending"},
+    ]
+    compact = [
+        "Task",
+        "Open",
+        "Status",
+        "Due",
+        "Course",
+        "Display type",
+        "Priority",
+        "Next step",
+    ]
+    area_specs = []
+    for area in MASTER_AREAS:
+        visible = compact if area == "School" else [
+            "Task",
+            "Open",
+            "Status",
+            "Due",
+            "Priority",
+            "Next step",
+            "Notes / progress",
+            "Last touched",
+        ]
+        configuration: dict[str, Any] = {
+            "type": "list",
+            "properties": properties(visible),
+        }
+        if area == "School":
+            configuration["group_by"] = {
+                "property_id": property_ids["Course"],
+                "hide_empty_groups": True,
+            }
+        area_specs.append(
+            {
+                "name": area,
+                "type": "list",
+                "filter": active_filter(
+                    _view_filter(property_ids["Area"], "select", "equals", area)
+                ),
+                "sorts": active_sorts,
+                "quick_filters": {},
+                "configuration": configuration,
+            }
+        )
+
+    return [
+        {
+            "name": "Active tasks",
+            "type": "table",
+            "filter": active_filter(),
+            "sorts": active_sorts,
+            "quick_filters": {},
+            "configuration": {
+                "type": "table",
+                "properties": properties(table=True),
+                "wrap_cells": False,
+                "frozen_column_index": 1,
+                "show_vertical_lines": True,
+            },
+            "position": {"type": "start"},
+        },
+        {
+            "name": "Today",
+            "type": "list",
+            "filter": active_filter(
+                _view_filter(property_ids["Focus rank"], "number", "is_not_empty", True)
+            ),
+            "sorts": [
+                {"property": property_ids["Focus rank"], "direction": "ascending"}
+            ],
+            "quick_filters": {},
+            "configuration": {
+                "type": "list",
+                "properties": properties(
+                    [
+                        "Task",
+                        "Open",
+                        "Course",
+                        "Due",
+                        "Priority",
+                        "Next step",
+                        "Notes / progress",
+                        "Focus reason",
+                    ]
+                ),
+            },
+        },
+        *area_specs,
+        {
+            "name": "Needs attention",
+            "type": "list",
+            "filter": {
+                "and": [
+                    _view_filter(
+                        property_ids["Archived"], "checkbox", "equals", False
+                    ),
+                    {
+                        "or": [
+                            _view_filter(
+                                property_ids["Status"],
+                                "select",
+                                "equals",
+                                "Needs remake",
+                            ),
+                            _view_filter(
+                                property_ids["Status"], "select", "equals", "Verify"
+                            ),
+                            _view_filter(
+                                property_ids["Needs verification"],
+                                "checkbox",
+                                "equals",
+                                True,
+                            ),
+                        ]
+                    },
+                ]
+            },
+            "sorts": active_sorts,
+            "quick_filters": {},
+            "configuration": {
+                "type": "list",
+                "properties": properties(compact + ["Notes / progress"]),
+            },
+        },
+        {
+            "name": "Submitted / waiting",
+            "type": "list",
+            "filter": {
+                "and": [
+                    _view_filter(
+                        property_ids["Archived"], "checkbox", "equals", False
+                    ),
+                    {
+                        "or": [
+                            _view_filter(
+                                property_ids["Status"], "select", "equals", "Submitted"
+                            ),
+                            _view_filter(
+                                property_ids["Status"], "select", "equals", "Waiting"
+                            ),
+                        ]
+                    },
+                ]
+            },
+            "sorts": [
+                {"property": property_ids["Due"], "direction": "descending"}
+            ],
+            "quick_filters": {},
+            "configuration": {
+                "type": "list",
+                "properties": properties(
+                    ["Task", "Open", "Status", "Course", "Due", "Notes / progress"]
+                ),
+            },
+        },
+        {
+            "name": "History",
+            "type": "list",
+            "filter": {
+                "or": [
+                    _view_filter(
+                        property_ids["Archived"], "checkbox", "equals", True
+                    ),
+                    _view_filter(
+                        property_ids["Status"], "select", "equals", "Done"
+                    ),
+                ]
+            },
+            "sorts": [{"property": property_ids["Due"], "direction": "descending"}],
+            "quick_filters": {},
+            "configuration": {
+                "type": "list",
+                "properties": properties(
+                    ["Task", "Open", "Status", "Course", "Display type", "Due"]
+                ),
+            },
+        },
+        {
+            "name": "_System",
+            "type": "table",
+            "filter": None,
+            "sorts": [{"property": property_ids["Task"], "direction": "ascending"}],
+            "quick_filters": {},
+            "configuration": {
+                "type": "table",
+                "properties": [
+                    {"property_id": property_id, "visible": True}
+                    for property_id in property_ids.values()
+                ],
+                "wrap_cells": False,
+                "frozen_column_index": 1,
+                "show_vertical_lines": True,
+            },
+        },
+    ]
 
 
 def _bounded(value: str, limit: int) -> str:
@@ -596,16 +871,27 @@ class NotionClient:
             "Notion-Version": NOTION_VERSION,
             "Content-Type": "application/json",
         }
+        self.view_headers = {
+            **self.headers,
+            "Notion-Version": NOTION_VIEW_VERSION,
+        }
 
     def _json(
-        self, method: str, path: str, *, payload=None, params=None, idempotent=None
+        self,
+        method: str,
+        path: str,
+        *,
+        payload=None,
+        params=None,
+        idempotent=None,
+        headers: dict[str, str] | None = None,
     ) -> Any:
         try:
             response = self.http.request_json(
                 method,
                 f"{NOTION_API}{path}",
                 source="notion",
-                headers=self.headers,
+                headers=headers or self.headers,
                 json=payload,
                 params=params,
                 idempotent=idempotent,
@@ -618,6 +904,120 @@ class NotionClient:
                 ) from exc
             raise NotionError(str(exc)) from exc
         return response.data
+
+    def master_property_ids(self, database_id: str) -> tuple[str, dict[str, str]]:
+        """Resolve the current data source and decoded property IDs for view APIs."""
+        compact_id = database_id.replace("-", "")
+        database = self._json(
+            "GET",
+            f"/databases/{compact_id}",
+            idempotent=True,
+            headers=self.view_headers,
+        )
+        data_sources = database.get("data_sources") or []
+        if len(data_sources) != 1 or not data_sources[0].get("id"):
+            raise NotionError("Tasks database must contain exactly one data source")
+        data_source_id = str(data_sources[0]["id"])
+        data_source = self._json(
+            "GET",
+            f"/data_sources/{data_source_id}",
+            idempotent=True,
+            headers=self.view_headers,
+        )
+        raw_properties = data_source.get("properties") or {}
+        property_ids = {
+            str(name): unquote(str(value.get("id") or ""))
+            for name, value in raw_properties.items()
+            if value.get("id")
+        }
+        return data_source_id, property_ids
+
+    def list_database_views(self, database_id: str) -> list[dict[str, Any]]:
+        """Return complete view objects, not the abbreviated list references."""
+        params: dict[str, Any] = {
+            "database_id": database_id.replace("-", ""),
+            "page_size": 100,
+        }
+        references: list[dict[str, Any]] = []
+        while True:
+            body = self._json(
+                "GET",
+                "/views",
+                params=params,
+                idempotent=True,
+                headers=self.view_headers,
+            )
+            references.extend(body.get("results") or [])
+            if not body.get("has_more"):
+                break
+            cursor = body.get("next_cursor")
+            if not cursor:
+                raise NotionError("Notion views response has no next_cursor")
+            params = {**params, "start_cursor": cursor}
+        return [
+            self._json(
+                "GET",
+                f"/views/{reference['id']}",
+                idempotent=True,
+                headers=self.view_headers,
+            )
+            for reference in references
+            if reference.get("id")
+        ]
+
+    def create_view(
+        self, database_id: str, data_source_id: str, spec: dict[str, Any]
+    ) -> dict[str, Any]:
+        payload = {
+            "database_id": database_id.replace("-", ""),
+            "data_source_id": data_source_id,
+            **spec,
+        }
+        return self._json(
+            "POST",
+            "/views",
+            payload=payload,
+            idempotent=False,
+            headers=self.view_headers,
+        )
+
+    def update_view(self, view_id: str, spec: dict[str, Any]) -> dict[str, Any]:
+        payload = {name: value for name, value in spec.items() if name != "type"}
+        payload.pop("position", None)
+        return self._json(
+            "PATCH",
+            f"/views/{view_id}",
+            payload=payload,
+            idempotent=True,
+            headers=self.view_headers,
+        )
+
+    def ensure_master_task_views(self, database_id: str) -> dict[str, str]:
+        """Create or update the clean task views while retaining one hidden data source."""
+        data_source_id, property_ids = self.master_property_ids(database_id)
+        specs = master_view_specs(property_ids)
+        existing = self.list_database_views(database_id)
+        by_name = {str(view.get("name") or ""): view for view in existing}
+        if "_System" not in by_name and "All Tasks" in by_name:
+            by_name["_System"] = by_name.pop("All Tasks")
+
+        urls: dict[str, str] = {}
+        for spec in specs:
+            current = by_name.get(spec["name"])
+            if current is not None:
+                if current.get("type") != spec["type"]:
+                    raise NotionError(
+                        f"Notion view {spec['name']} has type {current.get('type')}; "
+                        f"expected {spec['type']}"
+                    )
+                response = self.update_view(str(current["id"]), spec)
+            else:
+                response = self.create_view(database_id, data_source_id, spec)
+            fallback_url = str(current.get("url") or "") if current else ""
+            url = str(response.get("url") or fallback_url)
+            if url:
+                urls[spec["name"]] = url
+        return urls
 
     def get_active_work(self) -> WorkSnapshot:
         payload: dict[str, Any] = {
@@ -1321,6 +1721,8 @@ class NotionSchoolBoard:
             if should_archive and not _property_checkbox(page, "Archived"):
                 self.client.update_master_task(page_id, {"Archived": True})
                 result.rows_archived += 1
+        if hasattr(self.client, "ensure_master_task_views"):
+            result.view_urls = self.client.ensure_master_task_views(database_id)
         return result
 
     def get_master_task_context(self) -> dict[str, dict[str, Any]]:
