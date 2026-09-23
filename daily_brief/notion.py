@@ -103,6 +103,15 @@ class MasterTaskSyncResult:
 
 
 @dataclass
+class LegacySchoolMigrationResult:
+    rows_scanned: int = 0
+    unique_source_ids: int = 0
+    rows_created: int = 0
+    rows_updated: int = 0
+    rows_unchanged: int = 0
+
+
+@dataclass
 class MasterFocusSyncResult:
     page_id: str
     url: str
@@ -1439,6 +1448,12 @@ def _property_date_start(page: dict[str, Any], name: str) -> str:
     return str((value or {}).get("start") or "")
 
 
+def _property_url(page: dict[str, Any], name: str) -> str:
+    properties = page.get("properties") or {}
+    prop = properties.get(name) or {}
+    return str(prop.get("url") or "") if prop.get("type") == "url" else ""
+
+
 def _property_number(page: dict[str, Any], name: str) -> float | None:
     properties = page.get("properties") or {}
     prop = properties.get(name) or {}
@@ -1661,6 +1676,117 @@ class NotionSchoolBoard:
     def master_tasks_enabled(self) -> bool:
         """Return whether the safe migration has created the master database."""
         return self._master_task_database() is not None
+
+    def migrate_legacy_school_rows(self) -> LegacySchoolMigrationResult:
+        """Preserve legacy class-table history before those databases are archived."""
+        database_id = self._master_task_database()
+        if not database_id:
+            raise NotionError("master Tasks database does not exist")
+
+        existing: dict[str, tuple[str, dict[str, Any]]] = {}
+        for page in self.client.query_database_pages(database_id):
+            source_id = _property_rich_text(page, "Source ID")
+            page_id = str(page.get("id") or "")
+            if source_id and page_id and source_id not in existing:
+                existing[source_id] = (page_id, page)
+
+        candidates: dict[str, dict[str, Any]] = {}
+        result = LegacySchoolMigrationResult()
+        databases = self._child_databases(
+            self.client.list_block_children(self.school_page_id)
+        )
+        status_rank = {"": 0, "To do": 1, "Verify": 2, "Done": 3}
+        for course, legacy_database_id in databases.items():
+            if course == "General":
+                continue
+            for page in self.client.query_database_pages(legacy_database_id):
+                result.rows_scanned += 1
+                source_id = _property_rich_text(page, "Canvas ID")
+                name = _property_title(page, "Name").strip()
+                if not source_id or not name:
+                    continue
+                candidate = {
+                    "Task": _bounded(name, 500),
+                    "Done": _property_select(page, "Status") == "Done",
+                    "Status": _property_select(page, "Status") or "To do",
+                    "Area": "School",
+                    "Course": _bounded(course, 200),
+                    "Source type": "Canvas",
+                    "Source ID": source_id,
+                    "Source URL": _property_url(page, "Canvas") or None,
+                    "Due": _property_date_start(page, "Due") or None,
+                    "Priority": _property_select(page, "Priority") or "Later",
+                    "Effort": _property_select(page, "Effort") or None,
+                    "Kind": _property_select(page, "Kind") or "assignment",
+                    "Display type": display_task_type(
+                        name, _property_select(page, "Kind") or "assignment"
+                    ),
+                    "Next step": _property_rich_text(page, "Next step"),
+                    "Notes / progress": _property_rich_text(page, "Notes / progress"),
+                    "Instructions": _property_rich_text(page, "Instructions"),
+                    "Needs verification": _property_select(page, "Status") == "Verify",
+                    "Locked": False,
+                    "Unlock at": None,
+                    "Archived": True,
+                }
+                previous = candidates.get(source_id)
+                if previous is None:
+                    candidates[source_id] = candidate
+                    continue
+                if status_rank.get(candidate["Status"], 1) > status_rank.get(
+                    previous["Status"], 1
+                ):
+                    previous["Status"] = candidate["Status"]
+                    previous["Done"] = candidate["Done"]
+                    previous["Needs verification"] = candidate["Needs verification"]
+                for field_name in (
+                    "Source URL",
+                    "Due",
+                    "Effort",
+                    "Next step",
+                    "Notes / progress",
+                    "Instructions",
+                ):
+                    if not previous.get(field_name) and candidate.get(field_name):
+                        previous[field_name] = candidate[field_name]
+
+        result.unique_source_ids = len(candidates)
+        for source_id, fields in candidates.items():
+            current = existing.get(source_id)
+            if current is None:
+                fingerprint_fields = {
+                    name: value for name, value in fields.items() if name != "Done"
+                }
+                fields["Sync hash"] = hashlib.sha256(
+                    json.dumps(
+                        fingerprint_fields,
+                        sort_keys=True,
+                        default=str,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+                self.client.create_master_task(database_id, fields)
+                result.rows_created += 1
+                continue
+
+            page_id, page = current
+            updates: dict[str, Any] = {}
+            current_status = _property_select(page, "Status")
+            if not current_status and fields["Status"]:
+                updates["Status"] = fields["Status"]
+                updates["Done"] = fields["Done"]
+                updates["Needs verification"] = fields["Needs verification"]
+            if (
+                not _property_rich_text(page, "Notes / progress")
+                and fields["Notes / progress"]
+            ):
+                updates["Notes / progress"] = fields["Notes / progress"]
+            if updates:
+                self.client.update_master_task(page_id, updates)
+                result.rows_updated += 1
+            else:
+                result.rows_unchanged += 1
+        return result
 
     def sync_master_tasks(
         self,

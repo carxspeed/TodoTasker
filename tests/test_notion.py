@@ -216,6 +216,8 @@ def test_school_instructions_use_short_summary_and_keep_source_out_of_view() -> 
 class FakeSchoolClient:
     def __init__(self):
         self.children = []
+        self.children_by_page = {}
+        self.database_pages = {}
         self.created_databases = []
         self.created_rows = []
         self.ensured_properties = []
@@ -229,7 +231,7 @@ class FakeSchoolClient:
         return {"id": page_id, "url": "https://notion.test/tasks"}
 
     def list_block_children(self, page_id):
-        return list(self.children)
+        return list(self.children_by_page.get(page_id, self.children))
 
     def create_database(self, title, **kwargs):
         database_id = f"db-{len(self.created_databases) + 1}"
@@ -237,7 +239,7 @@ class FakeSchoolClient:
         return {"id": database_id}
 
     def query_database_pages(self, database_id):
-        return []
+        return list(self.database_pages.get(database_id, []))
 
     def ensure_database_properties(self, database_id, properties):
         self.ensured_properties.append((database_id, properties))
@@ -301,6 +303,96 @@ def test_school_board_creates_one_table_per_class_and_excludes_course() -> None:
     assert {title for title, _ in fake.created_databases} == {item.course for item in included}
     assert all(options["is_inline"] is True for _, options in fake.created_databases)
     assert all(row[1]["Canvas ID"] != assignments[-1].key for row in fake.created_rows)
+
+
+def test_legacy_school_migration_preserves_missing_rows_and_manual_context() -> None:
+    fake = FakeSchoolClient()
+    fake.children_by_page = {
+        "parent": [
+            {
+                "id": "master-db",
+                "type": "child_database",
+                "child_database": {"title": "Tasks"},
+            }
+        ],
+        "school": [
+            {
+                "id": "legacy-db",
+                "type": "child_database",
+                "child_database": {"title": "Physics"},
+            }
+        ],
+    }
+    fake.database_pages = {
+        "master-db": [
+            {
+                "id": "master-existing",
+                "properties": {
+                    "Source ID": text_prop("rich_text", "assignment:existing"),
+                    "Status": select_prop(None),
+                    "Notes / progress": text_prop("rich_text", ""),
+                },
+            }
+        ],
+        "legacy-db": [
+            {
+                "id": "legacy-existing",
+                "properties": {
+                    "Name": text_prop("title", "Existing lab"),
+                    "Canvas ID": text_prop("rich_text", "assignment:existing"),
+                    "Canvas": {"type": "url", "url": "https://canvas.test/existing"},
+                    "Due": date_prop("2026-09-20"),
+                    "Status": select_prop("Verify"),
+                    "Priority": select_prop("Verify"),
+                    "Effort": select_prop("M"),
+                    "Kind": select_prop("assignment"),
+                    "Next step": text_prop("rich_text", "Confirm submission."),
+                    "Notes / progress": text_prop("rich_text", "Turned in on paper."),
+                    "Instructions": text_prop("rich_text", "Bring the lab sheet."),
+                },
+            },
+            {
+                "id": "legacy-missing",
+                "properties": {
+                    "Name": text_prop("title", "Older worksheet"),
+                    "Canvas ID": text_prop("rich_text", "assignment:missing"),
+                    "Canvas": {"type": "url", "url": "https://canvas.test/missing"},
+                    "Due": date_prop("2026-09-10"),
+                    "Status": select_prop("To do"),
+                    "Priority": select_prop("Later"),
+                    "Effort": select_prop("S"),
+                    "Kind": select_prop("assignment"),
+                    "Next step": text_prop("rich_text", "Open the worksheet."),
+                    "Notes / progress": text_prop("rich_text", ""),
+                    "Instructions": text_prop("rich_text", "Complete questions 1–5."),
+                },
+            },
+        ],
+    }
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    result = board.migrate_legacy_school_rows()
+
+    assert result.rows_scanned == 2
+    assert result.unique_source_ids == 2
+    assert result.rows_created == 1
+    assert result.rows_updated == 1
+    created = fake.created_rows[0][1]
+    assert created["Source ID"] == "assignment:missing"
+    assert created["Archived"] is True
+    assert created["Course"] == "Physics"
+    assert len(created["Sync hash"]) == 64
+    assert fake.updated_rows == [
+        (
+            "master-existing",
+            {
+                "Status": "Verify",
+                "Done": False,
+                "Needs verification": True,
+                "Notes / progress": "Turned in on paper.",
+            },
+        )
+    ]
 
 
 def test_master_sync_creates_one_database_and_preserves_user_fields_on_updates() -> None:
