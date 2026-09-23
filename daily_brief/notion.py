@@ -1861,6 +1861,50 @@ class NotionSchoolBoard:
             self.client.update_database_title(linked_database_id, "School tasks")
         return response
 
+    def create_calendar_task_view(self) -> dict[str, Any]:
+        """Create a dedicated Calendar page backed by the master Due property."""
+        root_children = self.client.list_block_children(self.parent_page_id)
+        page_id = self._child_pages(root_children).get("Calendar")
+        page_created = False
+        if not page_id:
+            page = self.client.create_child_page(
+                "Calendar", parent_page_id=self.parent_page_id
+            )
+            page_id = str(page.get("id") or "")
+            if not page_id:
+                raise NotionError("Notion did not return the new Calendar page id")
+            page_created = True
+        elif self._child_databases(self.client.list_block_children(page_id)):
+            raise NotionError(
+                "Calendar already contains a database; refusing to create a duplicate view"
+            )
+
+        database_id = self._master_task_database()
+        if not database_id:
+            raise NotionError("master Tasks database does not exist")
+        data_source_id, property_ids = self.client.master_property_ids(database_id)
+        spec = next(
+            item
+            for item in master_view_specs(property_ids)
+            if item["name"] == "Due calendar"
+        )
+        response = self.client.create_linked_view(
+            page_id,
+            data_source_id,
+            {**spec, "name": "Due dates"},
+        )
+        linked_database_id = str(
+            (response.get("parent") or {}).get("database_id") or ""
+        )
+        if linked_database_id:
+            self.client.update_database_title(linked_database_id, "Calendar tasks")
+        return {
+            "page_id": page_id,
+            "page_created": page_created,
+            "view_id": str(response.get("id") or ""),
+            "url": str(response.get("url") or ""),
+        }
+
     def migrate_legacy_school_rows(self) -> LegacySchoolMigrationResult:
         """Preserve legacy class-table history before those databases are archived."""
         database_id = self._master_task_database()

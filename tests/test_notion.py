@@ -451,6 +451,33 @@ def test_school_page_gets_one_master_backed_view_grouped_by_course() -> None:
     assert fake.updated_database_titles == [("linked-db", "School tasks")]
 
 
+def test_calendar_page_gets_one_master_backed_due_view() -> None:
+    fake = FakeSchoolClient()
+    fake.children_by_page = {
+        "parent": [
+            {
+                "id": "master-db",
+                "type": "child_database",
+                "child_database": {"title": "Tasks"},
+            }
+        ],
+        "today-page": [],
+    }
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    result = board.create_calendar_task_view()
+
+    assert result["page_id"] == "today-page"
+    assert result["page_created"] is True
+    assert fake.created_pages == [("Calendar", {"parent_page_id": "parent"})]
+    parent_id, source_id, spec = fake.linked_views[0]
+    assert parent_id == "today-page"
+    assert source_id == "master-source"
+    assert spec["name"] == "Due dates"
+    assert spec["type"] == "calendar"
+    assert fake.updated_database_titles == [("linked-db", "Calendar tasks")]
+
+
 def test_legacy_layout_archive_is_narrow_and_requires_preserved_rows() -> None:
     fake = FakeSchoolClient()
     fake.children_by_page = {
