@@ -155,14 +155,7 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
         "property": property_ids["Due"],
         "date": {"is_not_empty": True},
     }
-    school_group = specs["School"]["configuration"]["group_by"]
-    assert school_group == {
-        "type": "text",
-        "property_id": property_ids["Course"],
-        "group_by": "exact",
-        "sort": {"type": "ascending"},
-        "hide_empty_groups": True,
-    }
+    assert "group_by" not in specs["School"]["configuration"]
 
 
 def test_school_assignment_payload_includes_source_id_and_safe_next_step() -> None:

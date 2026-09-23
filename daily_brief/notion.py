@@ -397,14 +397,6 @@ def master_view_specs(property_ids: dict[str, str]) -> list[dict[str, Any]]:
             "type": "list",
             "properties": properties(visible),
         }
-        if area == "School":
-            configuration["group_by"] = {
-                "type": "text",
-                "property_id": property_ids["Course"],
-                "group_by": "exact",
-                "sort": {"type": "ascending"},
-                "hide_empty_groups": True,
-            }
         area_specs.append(
             {
                 "name": area,
