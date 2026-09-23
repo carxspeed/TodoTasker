@@ -396,36 +396,7 @@ def master_view_specs(property_ids: dict[str, str]) -> list[dict[str, Any]]:
         "Priority",
         "Next step",
     ]
-    area_specs = []
-    for area in MASTER_AREAS:
-        visible = compact if area == "School" else [
-            "Task",
-            "Open",
-            "Status",
-            "Due",
-            "Priority",
-            "Next step",
-            "Notes / progress",
-            "Last touched",
-        ]
-        configuration: dict[str, Any] = {
-            "type": "list",
-            "properties": properties(visible),
-        }
-        area_specs.append(
-            {
-                "name": area,
-                "type": "list",
-                "filter": active_filter(
-                    _view_filter(property_ids["Area"], "select", "equals", area)
-                ),
-                "sorts": active_sorts,
-                "quick_filters": {},
-                "configuration": configuration,
-            }
-        )
-
-    return [
+    specs = [
         {
             "name": "Active tasks",
             "type": "table",
@@ -542,7 +513,6 @@ def master_view_specs(property_ids: dict[str, str]) -> list[dict[str, Any]]:
                 "show_vertical_lines": True,
             },
         },
-        *area_specs,
         {
             "name": "Needs attention",
             "type": "list",
@@ -650,6 +620,93 @@ def master_view_specs(property_ids: dict[str, str]) -> list[dict[str, Any]]:
             },
         },
     ]
+    order = {
+        name: index
+        for index, name in enumerate(
+            (
+                "Today",
+                "Due calendar",
+                "Upcoming",
+                "Active tasks",
+                "By area",
+                "Needs attention",
+                "Submitted / waiting",
+                "History",
+                "_System",
+            )
+        )
+    }
+    return sorted(specs, key=lambda spec: order[spec["name"]])
+
+
+def school_linked_view_spec(property_ids: dict[str, str]) -> dict[str, Any]:
+    """Return the single mobile-friendly School view, grouped by class."""
+    required = set(master_task_schema())
+    missing = required - set(property_ids)
+    if missing:
+        raise NotionError(
+            "Tasks database is missing School view properties: "
+            + ", ".join(sorted(missing))
+        )
+
+    visible = {
+        "Task": (260, True),
+        "Open": (80, False),
+        "Status": (110, False),
+        "Course": (190, True),
+        "Due": (145, False),
+        "Display type": (115, False),
+        "Priority": (90, False),
+        "Next step": (420, True),
+        "Notes / progress": (320, True),
+    }
+    properties = [
+        {
+            "property_id": property_ids[name],
+            "visible": name in visible,
+            **(
+                {"width": visible[name][0], "wrap": visible[name][1]}
+                if name in visible
+                else {}
+            ),
+        }
+        for name in property_ids
+    ]
+    return {
+        "name": "By class",
+        "type": "table",
+        "filter": {
+            "and": [
+                _view_filter(property_ids["Archived"], "checkbox", "equals", False),
+                *(
+                    _view_filter(
+                        property_ids["Status"], "select", "does_not_equal", status
+                    )
+                    for status in NON_ACTIONABLE_STATUSES
+                ),
+                _view_filter(property_ids["Area"], "select", "equals", "School"),
+            ]
+        },
+        "sorts": [
+            {"property": property_ids["Course"], "direction": "ascending"},
+            {"property": property_ids["Sort order"], "direction": "ascending"},
+            {"property": property_ids["Due"], "direction": "ascending"},
+        ],
+        "quick_filters": {},
+        "configuration": {
+            "type": "table",
+            "properties": properties,
+            "group_by": {
+                "type": "rich_text",
+                "property_id": property_ids["Course"],
+                "sort": {"type": "ascending"},
+                "hide_empty_groups": True,
+            },
+            "wrap_cells": False,
+            "frozen_column_index": 1,
+            "show_vertical_lines": True,
+        },
+    }
 
 
 def _bounded(value: str, limit: int) -> str:
@@ -1066,6 +1123,31 @@ class NotionClient:
             headers=self.view_headers,
         )
 
+    def create_linked_view(
+        self,
+        parent_page_id: str,
+        data_source_id: str,
+        spec: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Create a linked-database block without duplicating its task data."""
+        payload = {
+            "data_source_id": data_source_id,
+            "create_database": {
+                "parent": {
+                    "type": "page_id",
+                    "page_id": parent_page_id.replace("-", ""),
+                }
+            },
+            **{name: value for name, value in spec.items() if name != "position"},
+        }
+        return self._json(
+            "POST",
+            "/views",
+            payload=payload,
+            idempotent=False,
+            headers=self.view_headers,
+        )
+
     def update_view(self, view_id: str, spec: dict[str, Any]) -> dict[str, Any]:
         payload = {name: value for name, value in spec.items() if name != "type"}
         payload.pop("position", None)
@@ -1073,6 +1155,14 @@ class NotionClient:
             "PATCH",
             f"/views/{view_id}",
             payload=payload,
+            idempotent=True,
+            headers=self.view_headers,
+        )
+
+    def delete_view(self, view_id: str) -> dict[str, Any]:
+        return self._json(
+            "DELETE",
+            f"/views/{view_id}",
             idempotent=True,
             headers=self.view_headers,
         )
@@ -1100,6 +1190,52 @@ class NotionClient:
                 response = self.create_view(database_id, data_source_id, spec)
             fallback_url = str(current.get("url") or "") if current else ""
             url = str(response.get("url") or fallback_url)
+            if url:
+                urls[spec["name"]] = url
+        return urls
+
+    def rebuild_master_task_views(self, database_id: str) -> dict[str, str]:
+        """Replace cluttered master tabs with the canonical ordered view set."""
+        data_source_id, property_ids = self.master_property_ids(database_id)
+        specs = master_view_specs(property_ids)
+        system_spec = next(spec for spec in specs if spec["name"] == "_System")
+        existing = self.list_database_views(database_id)
+
+        keeper = next(
+            (
+                view
+                for view in existing
+                if view.get("name") in {"_System", "All Tasks"}
+                and view.get("type") == "table"
+            ),
+            None,
+        )
+        if keeper is None:
+            keeper = next(
+                (view for view in existing if view.get("type") == "table"), None
+            )
+        if keeper is None:
+            keeper = self.create_view(database_id, data_source_id, system_spec)
+        else:
+            keeper = self.update_view(str(keeper["id"]), system_spec)
+        keeper_id = str(keeper["id"])
+
+        for view in existing:
+            view_id = str(view.get("id") or "")
+            if view_id and view_id != keeper_id:
+                self.delete_view(view_id)
+
+        urls: dict[str, str] = {}
+        system_url = str(keeper.get("url") or "")
+        if system_url:
+            urls["_System"] = system_url
+        for spec in reversed([item for item in specs if item["name"] != "_System"]):
+            response = self.create_view(
+                database_id,
+                data_source_id,
+                {**spec, "position": {"type": "start"}},
+            )
+            url = str(response.get("url") or "")
             if url:
                 urls[spec["name"]] = url
         return urls
@@ -1682,6 +1818,25 @@ class NotionSchoolBoard:
     def master_tasks_enabled(self) -> bool:
         """Return whether the safe migration has created the master database."""
         return self._master_task_database() is not None
+
+    def create_school_task_view(self) -> dict[str, Any]:
+        """Create one linked master view on School, grouped by course."""
+        existing = self._child_databases(
+            self.client.list_block_children(self.school_page_id)
+        )
+        if existing:
+            raise NotionError(
+                "School already contains a database; refusing to create a duplicate view"
+            )
+        database_id = self._master_task_database()
+        if not database_id:
+            raise NotionError("master Tasks database does not exist")
+        data_source_id, property_ids = self.client.master_property_ids(database_id)
+        return self.client.create_linked_view(
+            self.school_page_id,
+            data_source_id,
+            school_linked_view_spec(property_ids),
+        )
 
     def migrate_legacy_school_rows(self) -> LegacySchoolMigrationResult:
         """Preserve legacy class-table history before those databases are archived."""

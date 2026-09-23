@@ -20,6 +20,7 @@ from daily_brief.notion import (
     master_task_properties,
     master_task_schema,
     master_view_specs,
+    school_linked_view_spec,
     notion_master_task_fields,
     school_assignment_fields,
     school_database_schema,
@@ -121,21 +122,17 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
     }
     specs = {spec["name"]: spec for spec in master_view_specs(property_ids)}
 
-    assert {
-        "Active tasks",
+    assert list(specs) == [
         "Today",
         "Due calendar",
         "Upcoming",
+        "Active tasks",
         "By area",
-        "School",
-        "Work",
-        "Connections",
-        "Misc",
         "Needs attention",
         "Submitted / waiting",
         "History",
         "_System",
-    } == set(specs)
+    ]
     active = specs["Active tasks"]
     columns = active["configuration"]["properties"]
     by_id = {column["property_id"]: column for column in columns}
@@ -170,7 +167,14 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
         "sort": {"type": "manual"},
         "hide_empty_groups": True,
     }
-    assert "group_by" not in specs["School"]["configuration"]
+    school = school_linked_view_spec(property_ids)
+    assert school["filter"]["and"][-1] == {
+        "property": property_ids["Area"],
+        "select": {"equals": "School"},
+    }
+    assert school["configuration"]["group_by"]["property_id"] == property_ids[
+        "Course"
+    ]
 
 
 def test_school_assignment_payload_includes_source_id_and_safe_next_step() -> None:
@@ -227,6 +231,7 @@ class FakeSchoolClient:
         self.appended_blocks = []
         self.archived_blocks = []
         self.archived_databases = []
+        self.linked_views = []
 
     def retrieve_page(self, page_id):
         return {"id": page_id, "url": "https://notion.test/tasks"}
@@ -291,6 +296,16 @@ class FakeSchoolClient:
     def archive_database(self, database_id):
         self.archived_databases.append(database_id)
         return {"id": database_id, "archived": True}
+
+    def master_property_ids(self, database_id):
+        return "master-source", {
+            name: f"id-{index}"
+            for index, name in enumerate(master_task_schema(), start=1)
+        }
+
+    def create_linked_view(self, parent_page_id, data_source_id, spec):
+        self.linked_views.append((parent_page_id, data_source_id, spec))
+        return {"id": "school-view", "url": "https://notion.test/school-view"}
 
 
 def test_school_board_creates_one_table_per_class_and_excludes_course() -> None:
@@ -398,6 +413,30 @@ def test_legacy_school_migration_preserves_missing_rows_and_manual_context() -> 
             },
         )
     ]
+
+
+def test_school_page_gets_one_master_backed_view_grouped_by_course() -> None:
+    fake = FakeSchoolClient()
+    fake.children_by_page = {
+        "parent": [
+            {
+                "id": "master-db",
+                "type": "child_database",
+                "child_database": {"title": "Tasks"},
+            }
+        ],
+        "school": [],
+    }
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    response = board.create_school_task_view()
+
+    assert response["id"] == "school-view"
+    parent_id, source_id, spec = fake.linked_views[0]
+    assert parent_id == "school"
+    assert source_id == "master-source"
+    assert spec["name"] == "By class"
+    assert spec["configuration"]["group_by"]["property_id"]
 
 
 def test_legacy_layout_archive_is_narrow_and_requires_preserved_rows() -> None:
@@ -1070,6 +1109,8 @@ def test_view_api_uses_current_version_and_decodes_property_ids() -> None:
             },
             {"id": "view", "url": "https://notion.test/view"},
             {"id": "view", "url": "https://notion.test/view"},
+            {"id": "linked-view", "url": "https://notion.test/linked"},
+            {"id": "view"},
         ]
     )
     client = NotionClient("token", "", http=http)
@@ -1093,6 +1134,12 @@ def test_view_api_uses_current_version_and_decodes_property_ids() -> None:
             "position": {"type": "start"},
         },
     )
+    client.create_linked_view(
+        "school-page",
+        source_id,
+        {"name": "By class", "type": "table", "position": {"type": "start"}},
+    )
+    client.delete_view("view")
 
     assert source_id == "source"
     assert property_ids["Due"] == "^uQv"
@@ -1104,6 +1151,12 @@ def test_view_api_uses_current_version_and_decodes_property_ids() -> None:
     assert http.calls[2][2]["json"]["database_id"] == "database"
     assert "type" not in http.calls[3][2]["json"]
     assert "position" not in http.calls[3][2]["json"]
+    assert http.calls[4][0:2] == ("POST", "https://api.notion.com/v1/views")
+    assert http.calls[4][2]["json"]["create_database"] == {
+        "parent": {"type": "page_id", "page_id": "schoolpage"}
+    }
+    assert "position" not in http.calls[4][2]["json"]
+    assert http.calls[5][0:2] == ("DELETE", "https://api.notion.com/v1/views/view")
 
 
 def test_named_task_database_creation_and_archive_payloads() -> None:
@@ -1120,6 +1173,65 @@ def test_named_task_database_creation_and_archive_payloads() -> None:
     assert http.calls[1][0:2] == ("PATCH", "https://api.notion.com/v1/pages/page")
     assert http.calls[1][2]["json"] == {"archived": True}
     assert http.calls[1][2]["idempotent"] is True
+
+
+def test_rebuild_master_views_keeps_one_system_view_and_recreates_clean_order() -> None:
+    client = NotionClient("token", "")
+    property_ids = {
+        name: f"id-{index}" for index, name in enumerate(master_task_schema(), start=1)
+    }
+    client.master_property_ids = lambda _database_id: ("source", property_ids)
+    client.list_database_views = lambda _database_id: [
+        {"id": "old-system", "name": "All Tasks", "type": "table"},
+        {"id": "old-school", "name": "School", "type": "list"},
+        {"id": "old-work", "name": "Work", "type": "list"},
+    ]
+    updated = []
+    deleted = []
+    created = []
+
+    def update_view(view_id, spec):
+        updated.append((view_id, spec["name"]))
+        return {"id": view_id, "name": spec["name"], "url": "system-url"}
+
+    def delete_view(view_id):
+        deleted.append(view_id)
+        return {"id": view_id}
+
+    def create_view(database_id, source_id, spec):
+        created.append((database_id, source_id, spec["name"], spec["position"]))
+        return {"id": f"new-{spec['name']}", "url": f"url-{spec['name']}"}
+
+    client.update_view = update_view
+    client.delete_view = delete_view
+    client.create_view = create_view
+
+    urls = client.rebuild_master_task_views("master")
+
+    assert updated == [("old-system", "_System")]
+    assert deleted == ["old-school", "old-work"]
+    assert [item[2] for item in created] == [
+        "History",
+        "Submitted / waiting",
+        "Needs attention",
+        "By area",
+        "Active tasks",
+        "Upcoming",
+        "Due calendar",
+        "Today",
+    ]
+    assert all(item[3] == {"type": "start"} for item in created)
+    assert set(urls) == {
+        "Today",
+        "Due calendar",
+        "Upcoming",
+        "Active tasks",
+        "By area",
+        "Needs attention",
+        "Submitted / waiting",
+        "History",
+        "_System",
+    }
 
 
 def test_query_paginates_and_normalizes_by_page_id() -> None:
