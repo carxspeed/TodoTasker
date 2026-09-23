@@ -399,7 +399,10 @@ def master_view_specs(property_ids: dict[str, str]) -> list[dict[str, Any]]:
         }
         if area == "School":
             configuration["group_by"] = {
+                "type": "text",
                 "property_id": property_ids["Course"],
+                "group_by": "exact",
+                "sort": {"type": "ascending"},
                 "hide_empty_groups": True,
             }
         area_specs.append(
@@ -456,6 +459,28 @@ def master_view_specs(property_ids: dict[str, str]) -> list[dict[str, Any]]:
                     ]
                 ),
             },
+        },
+        {
+            "name": "Due calendar",
+            "type": "calendar",
+            "filter": active_filter(
+                _view_filter(property_ids["Due"], "date", "is_not_empty", True)
+            ),
+            "sorts": [
+                {"property": property_ids["Due"], "direction": "ascending"},
+                {"property": property_ids["Course"], "direction": "ascending"},
+            ],
+            "quick_filters": {},
+            "configuration": {
+                "type": "calendar",
+                "date_property_id": property_ids["Due"],
+                "properties": properties(
+                    ["Task", "Course", "Status", "Priority", "Display type", "Open"]
+                ),
+                "view_range": "month",
+                "show_weekends": True,
+            },
+            "position": {"type": "start"},
         },
         *area_specs,
         {

@@ -124,6 +124,7 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
     assert {
         "Active tasks",
         "Today",
+        "Due calendar",
         "School",
         "Work",
         "Connections",
@@ -140,7 +141,28 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
     assert by_id[property_ids["Instructions"]]["width"] == 420
     assert by_id[property_ids["Focus rank"]]["visible"] is False
     assert by_id[property_ids["Source ID"]]["visible"] is False
-    assert specs["School"]["configuration"]["group_by"]["property_id"] == property_ids["Course"]
+    calendar = specs["Due calendar"]
+    assert calendar["type"] == "calendar"
+    assert calendar["configuration"] == {
+        "type": "calendar",
+        "date_property_id": property_ids["Due"],
+        "properties": calendar["configuration"]["properties"],
+        "view_range": "month",
+        "show_weekends": True,
+    }
+    assert calendar["position"] == {"type": "start"}
+    assert calendar["filter"]["and"][-1] == {
+        "property": property_ids["Due"],
+        "date": {"is_not_empty": True},
+    }
+    school_group = specs["School"]["configuration"]["group_by"]
+    assert school_group == {
+        "type": "text",
+        "property_id": property_ids["Course"],
+        "group_by": "exact",
+        "sort": {"type": "ascending"},
+        "hide_empty_groups": True,
+    }
 
 
 def test_school_assignment_payload_includes_source_id_and_safe_next_step() -> None:
