@@ -697,7 +697,7 @@ def school_linked_view_spec(property_ids: dict[str, str]) -> dict[str, Any]:
             "type": "table",
             "properties": properties,
             "group_by": {
-                "type": "rich_text",
+                "type": "text",
                 "property_id": property_ids["Course"],
                 "sort": {"type": "ascending"},
                 "hide_empty_groups": True,
