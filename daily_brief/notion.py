@@ -112,6 +112,12 @@ class LegacySchoolMigrationResult:
 
 
 @dataclass
+class LegacyLayoutArchiveResult:
+    root_databases: tuple[str, ...] = ()
+    school_databases: tuple[str, ...] = ()
+
+
+@dataclass
 class MasterFocusSyncResult:
     page_id: str
     url: str
@@ -1787,6 +1793,79 @@ class NotionSchoolBoard:
             else:
                 result.rows_unchanged += 1
         return result
+
+    def archive_legacy_layout(self) -> LegacyLayoutArchiveResult:
+        """Archive superseded databases only after their task rows are preserved.
+
+        The cleanup is deliberately narrow: five known root databases and the
+        legacy class databases nested under School.  It refuses to mutate
+        anything when a Today or School row cannot be matched to the master
+        Tasks database.
+        """
+        root_databases = self._child_databases(
+            self.client.list_block_children(self.parent_page_id)
+        )
+        master_database_id = root_databases.get(MASTER_TASK_TITLE)
+        if not master_database_id:
+            raise NotionError("master Tasks database does not exist")
+
+        master_source_ids = {
+            source_id
+            for page in self.client.query_database_pages(master_database_id)
+            if (source_id := _property_rich_text(page, "Source ID"))
+        }
+        if not master_source_ids:
+            raise NotionError("master Tasks database has no preserved source IDs")
+
+        root_titles = (
+            "Work",
+            "Connections",
+            "Misc",
+            "Today's Plan",
+            "Today's Focus",
+        )
+        for title in ("Today's Plan", "Today's Focus"):
+            database_id = root_databases.get(title)
+            if not database_id:
+                continue
+            for page in self.client.query_database_pages(database_id):
+                task_id = _property_rich_text(page, "Task ID")
+                if not task_id or task_id not in master_source_ids:
+                    raise NotionError(
+                        f"cannot archive {title}: row is not preserved in Tasks"
+                    )
+
+        school_databases = self._child_databases(
+            self.client.list_block_children(self.school_page_id)
+        )
+        for title, database_id in school_databases.items():
+            for page in self.client.query_database_pages(database_id):
+                name = _property_title(page, "Name").strip()
+                if not name or name.casefold().startswith("example:"):
+                    continue
+                source_id = _property_rich_text(page, "Canvas ID")
+                if not source_id or source_id not in master_source_ids:
+                    raise NotionError(
+                        f"cannot archive School/{title}: row is not preserved in Tasks"
+                    )
+
+        archived_root: list[str] = []
+        for title in root_titles:
+            database_id = root_databases.get(title)
+            if not database_id:
+                continue
+            self.client.archive_database(database_id)
+            archived_root.append(title)
+
+        archived_school: list[str] = []
+        for title, database_id in school_databases.items():
+            self.client.archive_database(database_id)
+            archived_school.append(title)
+
+        return LegacyLayoutArchiveResult(
+            root_databases=tuple(archived_root),
+            school_databases=tuple(archived_school),
+        )
 
     def sync_master_tasks(
         self,

@@ -226,6 +226,7 @@ class FakeSchoolClient:
         self.created_pages = []
         self.appended_blocks = []
         self.archived_blocks = []
+        self.archived_databases = []
 
     def retrieve_page(self, page_id):
         return {"id": page_id, "url": "https://notion.test/tasks"}
@@ -286,6 +287,10 @@ class FakeSchoolClient:
     def archive_block(self, block_id):
         self.archived_blocks.append(block_id)
         return {"id": block_id, "archived": True}
+
+    def archive_database(self, database_id):
+        self.archived_databases.append(database_id)
+        return {"id": database_id, "archived": True}
 
 
 def test_school_board_creates_one_table_per_class_and_excludes_course() -> None:
@@ -393,6 +398,119 @@ def test_legacy_school_migration_preserves_missing_rows_and_manual_context() -> 
             },
         )
     ]
+
+
+def test_legacy_layout_archive_is_narrow_and_requires_preserved_rows() -> None:
+    fake = FakeSchoolClient()
+    fake.children_by_page = {
+        "parent": [
+            {
+                "id": "master-db",
+                "type": "child_database",
+                "child_database": {"title": "Tasks"},
+            },
+            {
+                "id": "plan-db",
+                "type": "child_database",
+                "child_database": {"title": "Today's Plan"},
+            },
+            {
+                "id": "work-db",
+                "type": "child_database",
+                "child_database": {"title": "Work"},
+            },
+            {
+                "id": "keep-db",
+                "type": "child_database",
+                "child_database": {"title": "Keep Me"},
+            },
+        ],
+        "school": [
+            {
+                "id": "physics-db",
+                "type": "child_database",
+                "child_database": {"title": "Physics"},
+            }
+        ],
+    }
+    fake.database_pages = {
+        "master-db": [
+            {
+                "id": "master-row",
+                "properties": {
+                    "Source ID": text_prop("rich_text", "assignment:1"),
+                },
+            }
+        ],
+        "plan-db": [
+            {
+                "id": "plan-row",
+                "properties": {
+                    "Task ID": text_prop("rich_text", "assignment:1"),
+                },
+            }
+        ],
+        "physics-db": [
+            {
+                "id": "physics-row",
+                "properties": {
+                    "Name": text_prop("title", "Lab"),
+                    "Canvas ID": text_prop("rich_text", "assignment:1"),
+                },
+            }
+        ],
+    }
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    result = board.archive_legacy_layout()
+
+    assert result.root_databases == ("Work", "Today's Plan")
+    assert result.school_databases == ("Physics",)
+    assert fake.archived_databases == ["work-db", "plan-db", "physics-db"]
+    assert "keep-db" not in fake.archived_databases
+
+
+def test_legacy_layout_archive_stops_before_mutation_for_unpreserved_row() -> None:
+    fake = FakeSchoolClient()
+    fake.children_by_page = {
+        "parent": [
+            {
+                "id": "master-db",
+                "type": "child_database",
+                "child_database": {"title": "Tasks"},
+            },
+            {
+                "id": "focus-db",
+                "type": "child_database",
+                "child_database": {"title": "Today's Focus"},
+            },
+        ],
+        "school": [],
+    }
+    fake.database_pages = {
+        "master-db": [
+            {
+                "id": "master-row",
+                "properties": {
+                    "Source ID": text_prop("rich_text", "assignment:1"),
+                },
+            }
+        ],
+        "focus-db": [
+            {
+                "id": "focus-row",
+                "properties": {
+                    "Task ID": text_prop("rich_text", "assignment:missing"),
+                },
+            }
+        ],
+    }
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    with pytest.raises(Exception, match="not preserved"):
+        board.archive_legacy_layout()
+
+    assert fake.archived_databases == []
 
 
 def test_master_sync_creates_one_database_and_preserves_user_fields_on_updates() -> None:
