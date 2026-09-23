@@ -699,6 +699,7 @@ def school_linked_view_spec(property_ids: dict[str, str]) -> dict[str, Any]:
             "group_by": {
                 "type": "text",
                 "property_id": property_ids["Course"],
+                "group_by": "exact",
                 "sort": {"type": "ascending"},
                 "hide_empty_groups": True,
             },

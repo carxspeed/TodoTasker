@@ -176,6 +176,7 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
         "Course"
     ]
     assert school["configuration"]["group_by"]["type"] == "text"
+    assert school["configuration"]["group_by"]["group_by"] == "exact"
 
 
 def test_school_assignment_payload_includes_source_id_and_safe_next_step() -> None:
