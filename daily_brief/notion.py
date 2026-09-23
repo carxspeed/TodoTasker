@@ -1337,6 +1337,22 @@ class NotionClient:
         )
         return True
 
+    def update_database_title(self, database_id: str, title: str) -> dict[str, Any]:
+        return self._json(
+            "PATCH",
+            f"/databases/{database_id.replace('-', '')}",
+            payload={
+                "title": [
+                    {
+                        "type": "text",
+                        "text": {"content": _bounded(title, 200)},
+                    }
+                ]
+            },
+            idempotent=True,
+            headers=self.view_headers,
+        )
+
     def query_database_pages(self, database_id: str) -> list[dict[str, Any]]:
         payload: dict[str, Any] = {"page_size": 100}
         pages: list[dict[str, Any]] = []
@@ -1833,11 +1849,17 @@ class NotionSchoolBoard:
         if not database_id:
             raise NotionError("master Tasks database does not exist")
         data_source_id, property_ids = self.client.master_property_ids(database_id)
-        return self.client.create_linked_view(
+        response = self.client.create_linked_view(
             self.school_page_id,
             data_source_id,
             school_linked_view_spec(property_ids),
         )
+        linked_database_id = str(
+            (response.get("parent") or {}).get("database_id") or ""
+        )
+        if linked_database_id:
+            self.client.update_database_title(linked_database_id, "School tasks")
+        return response
 
     def migrate_legacy_school_rows(self) -> LegacySchoolMigrationResult:
         """Preserve legacy class-table history before those databases are archived."""

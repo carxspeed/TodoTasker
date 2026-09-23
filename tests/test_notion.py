@@ -234,6 +234,7 @@ class FakeSchoolClient:
         self.archived_blocks = []
         self.archived_databases = []
         self.linked_views = []
+        self.updated_database_titles = []
 
     def retrieve_page(self, page_id):
         return {"id": page_id, "url": "https://notion.test/tasks"}
@@ -307,7 +308,15 @@ class FakeSchoolClient:
 
     def create_linked_view(self, parent_page_id, data_source_id, spec):
         self.linked_views.append((parent_page_id, data_source_id, spec))
-        return {"id": "school-view", "url": "https://notion.test/school-view"}
+        return {
+            "id": "school-view",
+            "url": "https://notion.test/school-view",
+            "parent": {"type": "database_id", "database_id": "linked-db"},
+        }
+
+    def update_database_title(self, database_id, title):
+        self.updated_database_titles.append((database_id, title))
+        return {"id": database_id}
 
 
 def test_school_board_creates_one_table_per_class_and_excludes_course() -> None:
@@ -439,6 +448,7 @@ def test_school_page_gets_one_master_backed_view_grouped_by_course() -> None:
     assert source_id == "master-source"
     assert spec["name"] == "By class"
     assert spec["configuration"]["group_by"]["property_id"]
+    assert fake.updated_database_titles == [("linked-db", "School tasks")]
 
 
 def test_legacy_layout_archive_is_narrow_and_requires_preserved_rows() -> None:
@@ -1175,6 +1185,21 @@ def test_named_task_database_creation_and_archive_payloads() -> None:
     assert http.calls[1][0:2] == ("PATCH", "https://api.notion.com/v1/pages/page")
     assert http.calls[1][2]["json"] == {"archived": True}
     assert http.calls[1][2]["idempotent"] is True
+
+
+def test_linked_database_title_uses_current_api() -> None:
+    http = FakeHttp([{"id": "linked-db"}])
+    client = NotionClient("token", "", http=http)
+
+    result = client.update_database_title("linked-db", "School tasks")
+
+    assert result["id"] == "linked-db"
+    assert http.calls[0][0:2] == (
+        "PATCH",
+        "https://api.notion.com/v1/databases/linkeddb",
+    )
+    assert http.calls[0][2]["json"]["title"][0]["text"]["content"] == "School tasks"
+    assert http.calls[0][2]["headers"]["Notion-Version"] == "2026-03-11"
 
 
 def test_rebuild_master_views_keeps_one_system_view_and_recreates_clean_order() -> None:
