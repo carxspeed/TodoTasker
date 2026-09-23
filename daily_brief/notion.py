@@ -652,25 +652,25 @@ def school_linked_view_spec(property_ids: dict[str, str]) -> dict[str, Any]:
     visible = {
         "Task": (260, True),
         "Open": (80, False),
-        "Status": (110, False),
-        "Course": (190, True),
-        "Due": (145, False),
-        "Display type": (115, False),
-        "Priority": (90, False),
         "Next step": (420, True),
+        "Due": (145, False),
+        "Status": (110, False),
+        "Priority": (90, False),
+        "Display type": (115, False),
         "Notes / progress": (320, True),
     }
     properties = [
         {
             "property_id": property_ids[name],
-            "visible": name in visible,
-            **(
-                {"width": visible[name][0], "wrap": visible[name][1]}
-                if name in visible
-                else {}
-            ),
+            "visible": True,
+            "width": width,
+            "wrap": wrap,
         }
+        for name, (width, wrap) in visible.items()
+    ] + [
+        {"property_id": property_ids[name], "visible": False}
         for name in property_ids
+        if name not in visible
     ]
     return {
         "name": "By class",

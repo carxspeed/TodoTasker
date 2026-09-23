@@ -177,6 +177,20 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
     ]
     assert school["configuration"]["group_by"]["type"] == "text"
     assert school["configuration"]["group_by"]["group_by"] == "exact"
+    visible_school_ids = [
+        item["property_id"]
+        for item in school["configuration"]["properties"]
+        if item["visible"]
+    ]
+    assert visible_school_ids[:6] == [
+        property_ids["Task"],
+        property_ids["Open"],
+        property_ids["Next step"],
+        property_ids["Due"],
+        property_ids["Status"],
+        property_ids["Priority"],
+    ]
+    assert property_ids["Course"] not in visible_school_ids
 
 
 def test_school_assignment_payload_includes_source_id_and_safe_next_step() -> None:
