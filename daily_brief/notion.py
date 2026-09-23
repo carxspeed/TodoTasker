@@ -474,6 +474,59 @@ def master_view_specs(property_ids: dict[str, str]) -> list[dict[str, Any]]:
             },
             "position": {"type": "start"},
         },
+        {
+            "name": "Upcoming",
+            "type": "list",
+            "filter": active_filter(
+                _view_filter(property_ids["Due"], "date", "is_not_empty", True)
+            ),
+            "sorts": [
+                {"property": property_ids["Due"], "direction": "ascending"},
+                {"property": property_ids["Sort order"], "direction": "ascending"},
+                {"property": property_ids["Course"], "direction": "ascending"},
+            ],
+            "quick_filters": {},
+            "configuration": {
+                "type": "list",
+                "properties": properties(compact + ["Notes / progress"]),
+            },
+        },
+        {
+            "name": "By area",
+            "type": "table",
+            "filter": active_filter(),
+            "sorts": [
+                {"property": property_ids["Area"], "direction": "ascending"},
+                {"property": property_ids["Sort order"], "direction": "ascending"},
+                {"property": property_ids["Due"], "direction": "ascending"},
+            ],
+            "quick_filters": {},
+            "configuration": {
+                "type": "table",
+                "properties": properties(
+                    [
+                        "Task",
+                        "Open",
+                        "Status",
+                        "Area",
+                        "Course",
+                        "Due",
+                        "Priority",
+                        "Next step",
+                        "Notes / progress",
+                    ]
+                ),
+                "group_by": {
+                    "type": "select",
+                    "property_id": property_ids["Area"],
+                    "sort": {"type": "manual"},
+                    "hide_empty_groups": True,
+                },
+                "wrap_cells": False,
+                "frozen_column_index": 1,
+                "show_vertical_lines": True,
+            },
+        },
         *area_specs,
         {
             "name": "Needs attention",

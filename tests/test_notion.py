@@ -125,6 +125,8 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
         "Active tasks",
         "Today",
         "Due calendar",
+        "Upcoming",
+        "By area",
         "School",
         "Work",
         "Connections",
@@ -154,6 +156,19 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
     assert calendar["filter"]["and"][-1] == {
         "property": property_ids["Due"],
         "date": {"is_not_empty": True},
+    }
+    upcoming = specs["Upcoming"]
+    assert upcoming["type"] == "list"
+    assert upcoming["sorts"][0] == {
+        "property": property_ids["Due"],
+        "direction": "ascending",
+    }
+    by_area = specs["By area"]
+    assert by_area["configuration"]["group_by"] == {
+        "type": "select",
+        "property_id": property_ids["Area"],
+        "sort": {"type": "manual"},
+        "hide_empty_groups": True,
     }
     assert "group_by" not in specs["School"]["configuration"]
 
