@@ -101,6 +101,16 @@ class GuidanceRequest:
     prompt_chars: int
 
 
+@dataclass(frozen=True)
+class GuidanceOutcome:
+    result: GuidanceResult | None
+    source: Literal["anthropic", "local", "deterministic"]
+    model: str
+    status: Literal["success", "fallback"]
+    failure_code: str
+    attempts: int
+
+
 def dynamic_schema(keys: list[str]) -> dict[str, Any]:
     key_schema: dict[str, Any] = {"type": "string"}
     if keys:
@@ -383,6 +393,88 @@ def _anthropic_call(
         raise LLMUnavailable("Anthropic is unavailable") from exc
 
 
+def generate_guidance_outcome(
+    selected: list[ClassifiedItem],
+    free_windows: list[FreeWindow],
+    workload_totals: dict[str, Any],
+    target_date: date,
+    *,
+    provider: Literal["local", "anthropic"] = "local",
+    model: str = "qwen3:4b",
+    ollama_base_url: str = "http://localhost:11434",
+    ollama_model: str = "qwen3:4b",
+    anthropic_api_key: str = "",
+    session=None,
+    fallback_to_local: bool = True,
+) -> GuidanceOutcome:
+    try:
+        request = build_guidance_request(selected, free_windows, workload_totals, target_date)
+        client = session or requests.Session()
+    except (ValueError, ValidationError, jsonschema.ValidationError):
+        return GuidanceOutcome(None, "deterministic", "", "fallback", "request_invalid", 0)
+
+    candidates: list[tuple[Literal["local", "anthropic"], str]] = [(provider, model)]
+    if provider == "anthropic" and fallback_to_local:
+        candidates.append(("local", ollama_model))
+    total_attempts = 0
+    failures: list[str] = []
+    for candidate, candidate_model in candidates:
+        unavailable = False
+        for attempt in range(2):
+            total_attempts += 1
+            try:
+                if candidate == "local":
+                    text = _local_call(
+                        client,
+                        request,
+                        base_url=ollama_base_url,
+                        model=candidate_model,
+                        repair=attempt > 0,
+                    )
+                else:
+                    text = _anthropic_call(
+                        client,
+                        request,
+                        model=candidate_model,
+                        api_key=anthropic_api_key,
+                    )
+                result = _enforce_assessment_focus(
+                    validate_guidance_text(text, request), selected, target_date
+                )
+                return GuidanceOutcome(
+                    result,
+                    candidate,
+                    candidate_model,
+                    "success",
+                    "+".join(failures),
+                    total_attempts,
+                )
+            except LLMUnavailable:
+                failures.append(f"{candidate}_unavailable")
+                unavailable = True
+                break
+            except (
+                KeyError,
+                IndexError,
+                TypeError,
+                ValueError,
+                ValidationError,
+                jsonschema.ValidationError,
+            ):
+                if attempt == 1:
+                    failures.append(f"{candidate}_invalid_response")
+        if unavailable:
+            continue
+    return GuidanceOutcome(
+        None,
+        "deterministic",
+        "",
+        "fallback",
+        "+".join(failures) or "model_failed",
+        total_attempts,
+    )
+
+
 def generate_guidance(
     selected: list[ClassifiedItem],
     free_windows: list[FreeWindow],
@@ -395,36 +487,17 @@ def generate_guidance(
     anthropic_api_key: str = "",
     session=None,
 ) -> GuidanceResult | None:
-    try:
-        request = build_guidance_request(selected, free_windows, workload_totals, target_date)
-        client = session or requests.Session()
-    except (ValueError, ValidationError, jsonschema.ValidationError):
-        return None
-
-    attempts = 2
-    for attempt in range(attempts):
-        try:
-            if provider == "local":
-                text = _local_call(
-                    client,
-                    request,
-                    base_url=ollama_base_url,
-                    model=model,
-                    repair=attempt > 0,
-                )
-            else:
-                text = _anthropic_call(
-                    client,
-                    request,
-                    model=model,
-                    api_key=anthropic_api_key,
-                )
-            return _enforce_assessment_focus(
-                validate_guidance_text(text, request), selected, target_date
-            )
-        except LLMUnavailable:
-            return None
-        except (KeyError, IndexError, TypeError, ValueError, ValidationError, jsonschema.ValidationError):
-            if attempt + 1 == attempts:
-                return None
-    return None
+    """Backward-compatible result-only API; orchestration uses the diagnostic API."""
+    return generate_guidance_outcome(
+        selected,
+        free_windows,
+        workload_totals,
+        target_date,
+        provider=provider,
+        model=model,
+        ollama_base_url=ollama_base_url,
+        ollama_model=model,
+        anthropic_api_key=anthropic_api_key,
+        session=session,
+        fallback_to_local=False,
+    ).result

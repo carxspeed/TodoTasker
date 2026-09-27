@@ -26,7 +26,7 @@ from .canvas import (
 )
 from .classifier import classify
 from .config import Settings
-from .guidance import generate_guidance
+from .guidance import generate_guidance, generate_guidance_outcome
 from .models import (
     CalendarSnapshot,
     CanvasEnvelope,
@@ -35,6 +35,7 @@ from .models import (
     DailyBriefState,
     DeliveryRecord,
     GuidanceItem,
+    GuidanceDiagnostics,
     GuidanceResult,
     NotionSnapshot,
     PreparedArtifact,
@@ -248,6 +249,59 @@ class DailyBriefOrchestrator:
         self.guidance_call = guidance_call
         self.notion_delivery = notion_delivery
         self.telegram = telegram
+
+    def _request_guidance(
+        self,
+        selected,
+        free_windows,
+        totals,
+        target_date: date,
+    ) -> tuple[GuidanceResult | None, GuidanceDiagnostics]:
+        """Run the configured model with a local fallback and sanitized diagnostics."""
+        primary_model = (
+            self.settings.ollama_model
+            if self.settings.model_provider == "local"
+            else self.settings.anthropic_model
+        )
+        if self.guidance_call is generate_guidance:
+            outcome = generate_guidance_outcome(
+                selected,
+                free_windows,
+                totals,
+                target_date,
+                provider=self.settings.model_provider,
+                model=primary_model,
+                ollama_base_url=str(self.settings.ollama_base_url),
+                ollama_model=self.settings.ollama_model,
+                anthropic_api_key=self.settings.anthropic_api_key,
+            )
+            return outcome.result, GuidanceDiagnostics(
+                source=outcome.source,
+                model=outcome.model,
+                status=outcome.status,
+                failure_code=outcome.failure_code,
+                attempts=outcome.attempts,
+            )
+        try:
+            result = self.guidance_call(
+                selected,
+                free_windows,
+                totals,
+                target_date,
+                provider=self.settings.model_provider,
+                model=primary_model,
+                ollama_base_url=str(self.settings.ollama_base_url),
+                anthropic_api_key=self.settings.anthropic_api_key,
+            )
+        except Exception:
+            result = None
+        return result, GuidanceDiagnostics(
+            source="injected" if result is not None else "deterministic",
+            model=primary_model if result is not None else "",
+            status="success" if result is not None else "fallback",
+            failure_code="" if result is not None else "injected_model_failed",
+            attempts=1,
+        )
 
     def fetch_sources(
         self, provider, target_date: date, *, write_cache: bool
@@ -655,19 +709,11 @@ class DailyBriefOrchestrator:
             "overloaded": classification.overloaded,
             "unscheduled_required_count": classification.unscheduled_required_count,
         }
-        result = self.guidance_call(
+        result, guidance_diagnostics = self._request_guidance(
             selected,
             bundle.calendar.free_windows if bundle.calendar else [],
             totals,
             target_date,
-            provider=self.settings.model_provider,
-            model=(
-                self.settings.ollama_model
-                if self.settings.model_provider == "local"
-                else self.settings.anthropic_model
-            ),
-            ollama_base_url=str(self.settings.ollama_base_url),
-            anthropic_api_key=self.settings.anthropic_api_key,
         )
         warnings = list(bundle.warnings)
         if result is None:
@@ -690,6 +736,7 @@ class DailyBriefOrchestrator:
             prepared_at=now,
             rendered_brief=rendered,
             guidance=all_guidance,
+            guidance_diagnostics=guidance_diagnostics,
             focus=result.focus if result else None,
             classification=classification,
             sources=PreparedSources(
@@ -767,6 +814,11 @@ class DailyBriefOrchestrator:
         fingerprint = self._fingerprint(classification, bundle)
         unchanged = prepared is not None and prepared.classification_input_hash == fingerprint
         guidance = None
+        guidance_diagnostics = GuidanceDiagnostics(
+            source="deterministic",
+            status="fallback",
+            failure_code="not_requested",
+        )
         if unchanged and prepared:
             guidance = GuidanceResult(
                 overview="",
@@ -777,7 +829,27 @@ class DailyBriefOrchestrator:
                 ],
                 focus=prepared.focus,
             )
+            guidance_diagnostics = prepared.guidance_diagnostics
+        else:
+            selected = self._selected(classification)
+            totals = {
+                "selected_count": len(selected),
+                "selected_effort_hours": classification.selected_effort_hours,
+                "available_hours": classification.available_hours,
+                "overloaded": classification.overloaded,
+                "unscheduled_required_count": classification.unscheduled_required_count,
+            }
+            guidance, guidance_diagnostics = self._request_guidance(
+                selected,
+                bundle.calendar.free_windows if bundle.calendar else [],
+                totals,
+                target_date,
+            )
         warnings = list(bundle.warnings)
+        if guidance is None:
+            warnings.append(
+                "Guidance model was unavailable or invalid; deterministic guidance is shown"
+            )
         if state.last_delivered and now - state.last_delivered > timedelta(hours=36):
             warnings.insert(
                 0,
@@ -975,7 +1047,10 @@ class DailyBriefOrchestrator:
         line = (
             f"{now.isoformat()} | {'ok' if success else 'partial'} | "
             f"canvas={bundle.statuses['canvas']} notion={bundle.statuses['notion']} "
-            f"calendar={bundle.statuses['calendar']} guidance={'prepared' if unchanged else 'deterministic'} "
+            f"calendar={bundle.statuses['calendar']} "
+            f"guidance={'prepared:' if unchanged else ''}{guidance_diagnostics.source} "
+            f"guidance_model={guidance_diagnostics.model or 'none'} "
+            f"guidance_error={guidance_diagnostics.failure_code or 'none'} "
             f"telegram={status} diff={'unchanged' if unchanged else 'changed'} "
             f"canvas_error={bundle.errors.get('canvas', 'none')} "
             f"diagnostics={','.join(value.split()[0] for value in bundle.diagnostics) or 'none'}\n"

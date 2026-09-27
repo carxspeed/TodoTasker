@@ -316,6 +316,16 @@ class GuidanceResult(Contract):
     focus: FocusPlan | None = None
 
 
+class GuidanceDiagnostics(Contract):
+    """Safe, credential-free record of how a plan was produced."""
+
+    source: Literal["anthropic", "local", "deterministic", "injected"]
+    model: str = Field(default="", max_length=120)
+    status: Literal["success", "fallback"]
+    failure_code: str = Field(default="", max_length=240)
+    attempts: int = Field(default=0, ge=0, le=8)
+
+
 class NotificationTask(Contract):
     """One compact, actionable task shown in a delivery channel."""
 
@@ -367,6 +377,13 @@ class PreparedArtifact(Contract):
     prepared_at: AwareDatetime
     rendered_brief: str
     guidance: dict[str, str] = Field(default_factory=dict)
+    guidance_diagnostics: GuidanceDiagnostics = Field(
+        default_factory=lambda: GuidanceDiagnostics(
+            source="deterministic",
+            status="fallback",
+            failure_code="legacy_artifact",
+        )
+    )
     focus: FocusPlan | None = None
     classification: ClassificationOutput
     sources: PreparedSources

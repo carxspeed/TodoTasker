@@ -10,6 +10,7 @@ from daily_brief.guidance import (
     PROMPT_LIMIT,
     build_guidance_request,
     generate_guidance,
+    generate_guidance_outcome,
     validate_guidance_text,
 )
 from daily_brief.models import ClassifiedItem, FocusPlan, FreeWindow, GuidanceResult
@@ -392,6 +393,60 @@ def test_anthropic_generation_retries_one_invalid_structured_response() -> None:
 
     assert result is not None
     assert session.post_calls == 2
+
+
+def test_anthropic_unavailable_falls_back_to_local_ollama() -> None:
+    class FallbackSession(Session):
+        def post(self, url, *args, **kwargs):
+            self.post_calls += 1
+            if "anthropic.com" in url:
+                raise requests.ConnectionError("secret transport detail")
+            self.payload = kwargs["json"]
+            return Response({"message": {"content": response_for(["assignment:1"])}})
+
+    outcome = generate_guidance_outcome(
+        [task(1)],
+        [],
+        TOTALS,
+        date(2026, 9, 2),
+        provider="anthropic",
+        model="claude-sonnet-5",
+        anthropic_api_key="test-key",
+        ollama_model="qwen36:latest",
+        session=FallbackSession(""),
+    )
+
+    assert outcome.result is not None
+    assert outcome.source == "local"
+    assert outcome.model == "qwen36:latest"
+    assert outcome.failure_code == "anthropic_unavailable"
+    assert outcome.attempts == 2
+
+
+def test_all_model_failures_return_sanitized_deterministic_diagnostics() -> None:
+    class OfflineSession(Session):
+        def get(self, *args, **kwargs):
+            raise requests.ConnectionError("private local detail")
+
+        def post(self, *args, **kwargs):
+            raise requests.ConnectionError("private remote detail")
+
+    outcome = generate_guidance_outcome(
+        [task(1)],
+        [],
+        TOTALS,
+        date(2026, 9, 2),
+        provider="anthropic",
+        model="claude-sonnet-5",
+        anthropic_api_key="test-key",
+        ollama_model="qwen36:latest",
+        session=OfflineSession(""),
+    )
+
+    assert outcome.result is None
+    assert outcome.source == "deterministic"
+    assert outcome.failure_code == "anthropic_unavailable+local_unavailable"
+    assert "private" not in outcome.failure_code
 
 
 def test_zero_guidance_items_is_valid_and_still_one_call() -> None:

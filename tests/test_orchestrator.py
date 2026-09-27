@@ -394,6 +394,8 @@ def test_prepare_writes_valid_artifact_and_cache(tmp_path: Path) -> None:
     assert (tmp_path / "state" / "cache" / "canvas.json").exists()
     assert state.last_generated is not None
     assert len(artifact.classification_input_hash) == 64
+    assert artifact.guidance_diagnostics.source == "injected"
+    assert artifact.guidance_diagnostics.status == "success"
 
 
 def test_school_notes_inform_guidance_and_done_rows_are_excluded(tmp_path: Path) -> None:
@@ -583,7 +585,7 @@ def test_delivery_reuses_prepared_guidance_and_same_payload_skips(tmp_path: Path
     assert state.last_delivered is not None
 
 
-def test_changed_deadline_gets_updated_header_without_guidance_call(tmp_path: Path) -> None:
+def test_changed_deadline_gets_updated_header_and_fresh_guidance_call(tmp_path: Path) -> None:
     guidance = Guidance()
     telegram = Telegram()
     orchestrator = make_orchestrator(tmp_path, guidance, NotionDelivery(), telegram)
@@ -601,7 +603,7 @@ def test_changed_deadline_gets_updated_header_without_guidance_call(tmp_path: Pa
     )
     assert "Updated this morning" in text
     assert "Changed canonical title" in text
-    assert guidance.calls == 1
+    assert guidance.calls == 2
 
 
 def test_partial_canvas_response_retains_compatible_cached_assignments(tmp_path: Path) -> None:
@@ -712,6 +714,8 @@ def test_delivery_log_records_sanitized_canvas_error_code(tmp_path: Path) -> Non
 
     log = (tmp_path / "state" / "runs.log").read_text(encoding="utf-8")
     assert "canvas_error=SESSION_EXPIRED" in log
+    assert "guidance=injected" in log
+    assert "guidance_error=none" in log
     assert "private detail" not in log
 
 
