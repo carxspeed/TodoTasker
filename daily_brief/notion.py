@@ -743,28 +743,6 @@ def _navigation_card(
     }
 
 
-def _navigation_row(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
-    """Create a two-card row that naturally stacks in reading order on phones."""
-    return {
-        "object": "block",
-        "type": "column_list",
-        "column_list": {
-            "children": [
-                {
-                    "object": "block",
-                    "type": "column",
-                    "column": {"width_ratio": 0.5, "children": [left]},
-                },
-                {
-                    "object": "block",
-                    "type": "column",
-                    "column": {"width_ratio": 0.5, "children": [right]},
-                },
-            ]
-        },
-    }
-
-
 def home_dashboard_blocks(urls: dict[str, str]) -> list[dict[str, Any]]:
     """Build the calm, phone-friendly home navigation without duplicating data."""
     required = {
@@ -822,54 +800,48 @@ def home_dashboard_blocks(urls: dict[str, str]) -> list[dict[str, Any]]:
             color="green_background",
         ),
         heading("Plan"),
-        _navigation_row(
-            _navigation_card(
-                "Calendar",
-                "See what is due on any day.",
-                urls["Calendar"],
-                icon="🗓️",
-                color="blue_background",
-            ),
-            _navigation_card(
-                "All Tasks",
-                "Search and review everything.",
-                urls["All Tasks"],
-                icon="📋",
-                color="gray_background",
-            ),
+        _navigation_card(
+            "Calendar",
+            "See what is due on any day.",
+            urls["Calendar"],
+            icon="🗓️",
+            color="blue_background",
+        ),
+        _navigation_card(
+            "All Tasks",
+            "Search and review everything.",
+            urls["All Tasks"],
+            icon="📋",
+            color="gray_background",
         ),
         heading("Areas"),
-        _navigation_row(
-            _navigation_card(
-                "School",
-                "Classes, assignments, and assessments.",
-                urls["School"],
-                icon="🎓",
-                color="blue_background",
-            ),
-            _navigation_card(
-                "Work",
-                "Projects and personal work.",
-                urls["Work"],
-                icon="💼",
-                color="orange_background",
-            ),
+        _navigation_card(
+            "School",
+            "Classes, assignments, and assessments.",
+            urls["School"],
+            icon="🎓",
+            color="blue_background",
         ),
-        _navigation_row(
-            _navigation_card(
-                "Communications",
-                "People, replies, and follow-ups.",
-                urls["Communications"],
-                icon="💬",
-                color="purple_background",
-            ),
-            _navigation_card(
-                "Misc",
-                "Everything that belongs elsewhere.",
-                urls["Misc"],
-                icon="🧩",
-                color="yellow_background",
-            ),
+        _navigation_card(
+            "Work",
+            "Projects and personal work.",
+            urls["Work"],
+            icon="💼",
+            color="orange_background",
+        ),
+        _navigation_card(
+            "Communications",
+            "People, replies, and follow-ups.",
+            urls["Communications"],
+            icon="💬",
+            color="purple_background",
+        ),
+        _navigation_card(
+            "Misc",
+            "Everything that belongs elsewhere.",
+            urls["Misc"],
+            icon="🧩",
+            color="yellow_background",
         ),
         {"object": "block", "type": "divider", "divider": {}},
         _navigation_card(
@@ -1781,12 +1753,19 @@ class NotionClient:
         )
 
     def append_block_children(
-        self, block_id: str, children: list[dict[str, Any]]
+        self,
+        block_id: str,
+        children: list[dict[str, Any]],
+        *,
+        after: str | None = None,
     ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"children": children}
+        if after:
+            payload["after"] = after.replace("-", "")
         return self._json(
             "PATCH",
             f"/blocks/{block_id.replace('-', '')}/children",
-            payload={"children": children},
+            payload=payload,
             idempotent=False,
         )
 
@@ -2451,6 +2430,77 @@ class NotionSchoolBoard:
             "navigation_page_id": navigation_page_id,
             "moved_pages": tuple(moved_pages),
             "database_moved": database_was_root,
+        }
+
+    def rebuild_home_dashboard(self) -> dict[str, Any]:
+        """Replace generated home cards in place while keeping the Pages link last."""
+        root_children = self.client.list_block_children(self.parent_page_id)
+        navigation_page_id = self._child_pages(root_children).get(
+            NAVIGATION_PAGE_TITLE
+        )
+        if not navigation_page_id:
+            raise NotionError("Pages container does not exist; organize the home first")
+
+        navigation_children = self.client.list_block_children(navigation_page_id)
+        pages = self._child_pages(navigation_children)
+        required_pages = {
+            "Today",
+            "Calendar",
+            "School",
+            "Work",
+            "Communications",
+            "Misc",
+            "Completed",
+        }
+        missing_pages = required_pages - set(pages)
+        if missing_pages:
+            raise NotionError(
+                "Cannot rebuild the home dashboard without: "
+                + ", ".join(sorted(missing_pages))
+            )
+
+        database_id = self._master_task_database()
+        if not database_id:
+            raise NotionError("master All Tasks database does not exist")
+        urls = {
+            title: f"https://www.notion.so/{page_id.replace('-', '')}"
+            for title, page_id in pages.items()
+            if title in required_pages
+        }
+        urls["All Tasks"] = (
+            f"https://www.notion.so/{database_id.replace('-', '')}"
+        )
+
+        generated_blocks = [
+            block for block in root_children if block.get("type") != "child_page"
+        ]
+        marker = next(
+            (
+                block
+                for block in generated_blocks
+                if self._block_plain_text(block) == HOME_DASHBOARD_MARKER
+            ),
+            None,
+        )
+        marker_id = str((marker or {}).get("id") or "")
+        if not marker_id:
+            raise NotionError("generated home dashboard marker was not found")
+
+        new_blocks = home_dashboard_blocks(urls)
+        self.client.append_block_children(
+            self.parent_page_id,
+            new_blocks,
+            after=marker_id,
+        )
+        archived = 0
+        for block in generated_blocks:
+            block_id = str(block.get("id") or "")
+            if block_id:
+                self.client.archive_block(block_id)
+                archived += 1
+        return {
+            "blocks_written": len(new_blocks),
+            "blocks_archived": archived,
         }
 
     def migrate_legacy_school_rows(self) -> LegacySchoolMigrationResult:

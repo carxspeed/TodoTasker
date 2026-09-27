@@ -183,7 +183,7 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
     assert property_ids["Course"] not in visible_school_ids
 
 
-def test_home_dashboard_uses_a_hero_and_phone_stacking_card_rows() -> None:
+def test_home_dashboard_uses_full_width_cards_that_remain_readable_on_phones() -> None:
     urls = {
         title: f"https://notion.test/{title.lower().replace(' ', '-')}"
         for title in (
@@ -205,14 +205,22 @@ def test_home_dashboard_uses_a_hero_and_phone_stacking_card_rows() -> None:
     )
     assert blocks[1]["callout"]["icon"]["emoji"] == "🎯"
     assert blocks[1]["callout"]["color"] == "green_background"
-    rows = [block for block in blocks if block["type"] == "column_list"]
-    assert len(rows) == 3
-    assert all(len(row["column_list"]["children"]) == 2 for row in rows)
-    assert all(
-        len(column["column"]["children"]) == 1
-        for row in rows
-        for column in row["column_list"]["children"]
-    )
+    assert not [block for block in blocks if block["type"] == "column_list"]
+    card_titles = [
+        block["callout"]["rich_text"][0]["text"]["content"]
+        for block in blocks
+        if block["type"] == "callout"
+    ]
+    assert card_titles == [
+        "Today",
+        "Calendar",
+        "All Tasks",
+        "School",
+        "Work",
+        "Communications",
+        "Misc",
+        "Completed",
+    ]
     completed = blocks[-2]
     assert completed["callout"]["icon"]["emoji"] == "✅"
     assert completed["callout"]["rich_text"][0]["text"]["link"]["url"] == (
@@ -332,8 +340,8 @@ class FakeSchoolClient:
         self.created_pages.append((title, kwargs))
         return {"id": "today-page", "url": "https://notion.test/today"}
 
-    def append_block_children(self, page_id, blocks):
-        self.appended_blocks.append((page_id, blocks))
+    def append_block_children(self, page_id, blocks, **kwargs):
+        self.appended_blocks.append((page_id, blocks, kwargs))
         return {"results": blocks}
 
     def archive_block(self, block_id):
@@ -642,6 +650,63 @@ def test_home_dashboard_preserves_pages_and_moves_them_behind_visual_cards() -> 
         ("master-db", "pages-container", "📋")
     ]
     assert ("parent", "✅") in fake.updated_page_icons
+
+
+def test_home_dashboard_rebuild_inserts_replacement_before_pages_container() -> None:
+    fake = FakeSchoolClient()
+    page_titles = [
+        "Today",
+        "Calendar",
+        "School",
+        "Work",
+        "Communications",
+        "Misc",
+        "Completed",
+    ]
+    fake.children_by_page = {
+        "parent": [
+            {
+                "id": "old-marker",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [{"plain_text": "Your day, without the clutter."}]
+                },
+            },
+            {
+                "id": "old-card",
+                "type": "callout",
+                "callout": {"rich_text": [{"plain_text": "Today"}]},
+            },
+            {
+                "id": "pages-container",
+                "type": "child_page",
+                "child_page": {"title": "Pages"},
+            },
+        ],
+        "pages-container": [
+            *[
+                {
+                    "id": f"page-{title.lower()}",
+                    "type": "child_page",
+                    "child_page": {"title": title},
+                }
+                for title in page_titles
+            ],
+            {
+                "id": "master-db",
+                "type": "child_database",
+                "child_database": {"title": "All Tasks"},
+            },
+        ],
+    }
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    result = board.rebuild_home_dashboard()
+
+    assert result["blocks_archived"] == 2
+    assert result["blocks_written"] == 13
+    assert fake.appended_blocks[0][2] == {"after": "old-marker"}
+    assert fake.archived_blocks == ["old-marker", "old-card"]
 
 
 def test_legacy_layout_archive_is_narrow_and_requires_preserved_rows() -> None:
@@ -1431,6 +1496,26 @@ def test_home_layout_api_moves_pages_and_database_without_recreating_them() -> N
         call[2]["headers"]["Notion-Version"] == "2026-03-11"
         for call in http.calls
     )
+
+
+def test_block_append_can_insert_dashboard_replacement_after_marker() -> None:
+    http = FakeHttp([{"results": []}])
+    client = NotionClient("token", "", http=http)
+
+    client.append_block_children(
+        "root-page",
+        [{"object": "block", "type": "divider", "divider": {}}],
+        after="marker-block",
+    )
+
+    assert http.calls[0][0:2] == (
+        "PATCH",
+        "https://api.notion.com/v1/blocks/rootpage/children",
+    )
+    assert http.calls[0][2]["json"] == {
+        "children": [{"object": "block", "type": "divider", "divider": {}}],
+        "after": "markerblock",
+    }
 
 
 def test_rebuild_master_views_keeps_rows_and_replaces_clutter_with_canonical_tabs() -> None:
