@@ -722,6 +722,8 @@ def _navigation_link(
     title: str,
     description: str,
     url: str,
+    *,
+    compact: bool = False,
 ) -> dict[str, Any]:
     return {
         "object": "block",
@@ -735,7 +737,9 @@ def _navigation_link(
                 },
                 {
                     "type": "text",
-                    "text": {"content": f"\n{description}"},
+                    "text": {
+                        "content": f" — {description}" if compact else f"\n{description}"
+                    },
                     "annotations": {"color": "gray"},
                 },
             ],
@@ -779,56 +783,6 @@ def home_dashboard_blocks(urls: dict[str, str]) -> list[dict[str, Any]]:
             },
         }
 
-    left = [
-        heading("Today"),
-        _navigation_link(
-            "Open today's focus",
-            "A short, ordered plan with one clear place to start.",
-            urls["Today"],
-        ),
-        {"object": "block", "type": "divider", "divider": {}},
-        heading("Plan"),
-        _navigation_link(
-            "Calendar",
-            "See what is due on any day.",
-            urls["Calendar"],
-        ),
-        _navigation_link(
-            "All tasks",
-            "Update completion, notes, and next steps.",
-            urls["All Tasks"],
-        ),
-    ]
-    right = [
-        heading("Areas"),
-        _navigation_link(
-            "School",
-            "Classes, assignments, and assessments.",
-            urls["School"],
-        ),
-        _navigation_link(
-            "Work",
-            "Projects and personal work.",
-            urls["Work"],
-        ),
-        _navigation_link(
-            "Communications",
-            "People, replies, and follow-ups.",
-            urls["Communications"],
-        ),
-        _navigation_link(
-            "Misc",
-            "Everything that belongs elsewhere.",
-            urls["Misc"],
-        ),
-        {"object": "block", "type": "divider", "divider": {}},
-        _navigation_link(
-            "Completed",
-            "Done, submitted, waiting, and archived tasks.",
-            urls["Completed"],
-        ),
-    ]
-
     return [
         {
             "object": "block",
@@ -843,24 +797,59 @@ def home_dashboard_blocks(urls: dict[str, str]) -> list[dict[str, Any]]:
                 ]
             },
         },
-        {
-            "object": "block",
-            "type": "column_list",
-            "column_list": {
-                "children": [
-                    {
-                        "object": "block",
-                        "type": "column",
-                        "column": {"width_ratio": 0.58, "children": left},
-                    },
-                    {
-                        "object": "block",
-                        "type": "column",
-                        "column": {"width_ratio": 0.42, "children": right},
-                    },
-                ]
-            },
-        },
+        heading("Today"),
+        _navigation_link(
+            "Open today's focus",
+            "A short, ordered plan with one clear place to start.",
+            urls["Today"],
+        ),
+        {"object": "block", "type": "divider", "divider": {}},
+        heading("Plan"),
+        _navigation_link(
+            "Calendar",
+            "See what is due on any day.",
+            urls["Calendar"],
+            compact=True,
+        ),
+        _navigation_link(
+            "All tasks",
+            "Update completion, notes, and next steps.",
+            urls["All Tasks"],
+            compact=True,
+        ),
+        {"object": "block", "type": "divider", "divider": {}},
+        heading("Areas"),
+        _navigation_link(
+            "School",
+            "Classes, assignments, and assessments.",
+            urls["School"],
+            compact=True,
+        ),
+        _navigation_link(
+            "Work",
+            "Projects and personal work.",
+            urls["Work"],
+            compact=True,
+        ),
+        _navigation_link(
+            "Communications",
+            "People, replies, and follow-ups.",
+            urls["Communications"],
+            compact=True,
+        ),
+        _navigation_link(
+            "Misc",
+            "Everything that belongs elsewhere.",
+            urls["Misc"],
+            compact=True,
+        ),
+        {"object": "block", "type": "divider", "divider": {}},
+        _navigation_link(
+            "Completed",
+            "Done, submitted, waiting, and archived tasks.",
+            urls["Completed"],
+            compact=True,
+        ),
         {"object": "block", "type": "divider", "divider": {}},
         {
             "object": "block",
