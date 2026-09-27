@@ -31,6 +31,26 @@ CanvasSubmissionStatus = Literal[
     "unknown",
 ]
 
+TaskReasonCode = Literal[
+    "manual_needs_remake",
+    "manual_in_progress",
+    "status_unsubmitted",
+    "submission_unknown",
+    "overdue",
+    "due_within_24h",
+    "due_within_48h_large",
+    "no_due_date",
+    "locked_until_available",
+    "cadence_never_touched",
+    "cadence_overdue",
+    "deadline_overdue",
+    "deadline_within_24h",
+    "deadline_within_48h_large",
+    "no_schedule",
+    "assessment_tomorrow",
+    "study_preparation",
+]
+
 
 class CanvasSubmissionEvidence(Contract):
     """Sanitized facts used by Python to decide whether Canvas work is actionable."""
@@ -247,6 +267,7 @@ class ClassifiedItem(Contract):
     needs_confirmation: bool = False
     locked_for_user: bool = False
     unlock_at: AwareDatetime | None = None
+    reason_codes: list[TaskReasonCode] = Field(default_factory=list)
 
 
 class Promotion(Contract):

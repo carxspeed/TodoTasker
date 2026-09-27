@@ -442,6 +442,67 @@ def test_school_notes_inform_guidance_and_done_rows_are_excluded(tmp_path: Path)
     assert all(item.key != completed.key for item in artifact.sources.canvas.assignments)
 
 
+@pytest.mark.parametrize("manual_status", ["Submitted", "Waiting", "Done"])
+def test_master_manual_nonactionable_statuses_override_canvas(
+    tmp_path: Path, manual_status: str
+) -> None:
+    notion = MasterNotionDelivery()
+    provider = Provider()
+    assignment = provider.canvas.assignments[0]
+    notion.master_context = {
+        assignment.key: {
+            "done": manual_status == "Done",
+            "archived": False,
+            "status": manual_status,
+            "notes": "Handled outside Canvas.",
+        }
+    }
+
+    artifact, _ = make_orchestrator(tmp_path, notion=notion).prepare(
+        provider,
+        target_date=TARGET,
+        as_of=datetime(2026, 9, 2, 6, 30, tzinfo=TZ),
+        dry_run=True,
+    )
+
+    assert assignment.key not in {
+        item.key for item in artifact.sources.canvas.assignments
+    }
+    assert assignment.key not in {
+        item.key
+        for item in [
+            *artifact.classification.must,
+            *artifact.classification.smart,
+            *artifact.classification.may,
+        ]
+    }
+
+
+def test_master_needs_remake_and_notes_remain_authoritative(tmp_path: Path) -> None:
+    notion = MasterNotionDelivery()
+    provider = Provider()
+    assignment = provider.canvas.assignments[0]
+    notion.master_context = {
+        assignment.key: {
+            "done": False,
+            "archived": False,
+            "status": "Needs remake",
+            "notes": "Teacher approved a retake on paper.",
+        }
+    }
+
+    artifact, _ = make_orchestrator(tmp_path, notion=notion).prepare(
+        provider,
+        target_date=TARGET,
+        as_of=datetime(2026, 9, 2, 6, 30, tzinfo=TZ),
+        dry_run=True,
+    )
+
+    task = next(item for item in artifact.classification.must if item.key == assignment.key)
+    assert task.user_notes == "Teacher approved a retake on paper."
+    assert task.reason_codes[0] == "manual_needs_remake"
+
+
 def test_master_layout_is_the_source_of_truth_and_routes_delivery_without_duplicates(
     tmp_path: Path,
 ) -> None:

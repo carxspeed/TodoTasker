@@ -20,6 +20,7 @@ from .models import (
     PlannerEvent,
     Promotion,
     SeenAssignment,
+    TaskReasonCode,
 )
 
 
@@ -61,6 +62,38 @@ def _deadline_tier(delta: timedelta | None, *, explicit_large: bool) -> str:
     if explicit_large and delta <= timedelta(hours=48):
         return "must"
     return "smart"
+
+
+def _canvas_reason_codes(
+    item: CanvasAssignment,
+    *,
+    delta: timedelta | None,
+    effort: str,
+    effort_source: str,
+) -> list[TaskReasonCode]:
+    """Explain Python's factual classification without asking the model to infer it."""
+    reasons: list[TaskReasonCode] = []
+    if item.manual_status == "Needs remake":
+        reasons.append("manual_needs_remake")
+    if item.submission_status == "unknown":
+        reasons.append("submission_unknown")
+    else:
+        reasons.append("status_unsubmitted")
+    if delta is None:
+        reasons.append("no_due_date")
+    elif delta < timedelta(0):
+        reasons.append("overdue")
+    elif delta <= timedelta(hours=24):
+        reasons.append("due_within_24h")
+    elif effort_source == "override" and effort == "L" and delta <= timedelta(hours=48):
+        reasons.append("due_within_48h_large")
+    if item.locked_for_user or (
+        item.unlock_at is not None
+        and item.due_at is not None
+        and item.unlock_at > item.due_at
+    ):
+        reasons.append("locked_until_available")
+    return reasons
 
 
 def _classify_canvas(
@@ -107,6 +140,12 @@ def _classify_canvas(
             needs_confirmation=item.needs_confirmation,
             locked_for_user=item.locked_for_user,
             unlock_at=item.unlock_at,
+            reason_codes=_canvas_reason_codes(
+                item,
+                delta=delta,
+                effort=effort,
+                effort_source=effort_source,
+            ),
         ),
         urgent_verify,
     )
@@ -144,6 +183,25 @@ def _classify_notion(
         tier = "must"
     elif item.status == "In progress" and TIER_SCORE[tier] < TIER_SCORE["smart"]:
         tier = "smart"
+    reasons: list[TaskReasonCode] = []
+    if item.status == "Needs remake":
+        reasons.append("manual_needs_remake")
+    elif item.status == "In progress":
+        reasons.append("manual_in_progress")
+    if real_cadence is not None:
+        if item.last_touched is None:
+            reasons.append("cadence_never_touched")
+        elif overdue_periods >= 1:
+            reasons.append("cadence_overdue")
+    delta = _deadline_delta(due_at, as_of)
+    if due_at is None and real_cadence is None:
+        reasons.append("no_schedule")
+    elif delta is not None and delta < timedelta(0):
+        reasons.append("deadline_overdue")
+    elif delta is not None and delta <= timedelta(hours=24):
+        reasons.append("deadline_within_24h")
+    elif delta is not None and item.effort == "L" and delta <= timedelta(hours=48):
+        reasons.append("deadline_within_48h_large")
     return ClassifiedItem(
         key=item.key,
         source="notion",
@@ -159,6 +217,7 @@ def _classify_notion(
         next_step=item.next_step,
         url=item.url,
         overdue_periods=overdue_periods,
+        reason_codes=reasons,
     )
 
 
@@ -231,6 +290,7 @@ def _classify_planner_assessment(
         description=event.text,
         url=event.url,
         submission_status="unsubmitted",
+        reason_codes=["assessment_tomorrow", "study_preparation"],
     )
 
 

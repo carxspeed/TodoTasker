@@ -160,6 +160,7 @@ def _task_payload(item: ClassifiedItem) -> dict[str, Any]:
         "effort_hours": item.effort_hours,
         "course": item.course,
         "locked_for_user": item.locked_for_user,
+        "reason_codes": item.reason_codes,
     }
     if item.source == "canvas":
         payload["canvas_instructions"] = item.description[:CANVAS_INSTRUCTION_LIMIT]

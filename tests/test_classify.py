@@ -88,6 +88,8 @@ def test_canvas_24_hour_boundary_is_must_and_missing_due_is_may() -> None:
     result = run([canvas_item("assignment:1", due_hours=24), canvas_item("assignment:2", due_hours=None)])
     assert selected_tier(result, "assignment:1") == "must"
     assert selected_tier(result, "assignment:2") == "may"
+    assert result.must[0].reason_codes == ["status_unsubmitted", "due_within_24h"]
+    assert result.may[0].reason_codes == ["status_unsubmitted", "no_due_date"]
 
 
 def test_locked_assignment_stays_visible_but_sorts_after_available_work() -> None:
@@ -100,6 +102,7 @@ def test_locked_assignment_stays_visible_but_sorts_after_available_work() -> Non
 
     assert [item.key for item in result.must] == [available.key, locked.key]
     assert result.must[1].locked_for_user is True
+    assert "locked_until_available" in result.must[1].reason_codes
 
 
 def test_tomorrows_weekly_quiz_becomes_a_study_task_today() -> None:
@@ -115,6 +118,7 @@ def test_tomorrows_weekly_quiz_becomes_a_study_task_today() -> None:
     assert study.name == "Study for Quiz 2"
     assert study.course == "Calculus"
     assert study.url == event.url
+    assert study.reason_codes == ["assessment_tomorrow", "study_preparation"]
 
 
 def test_todays_quiz_is_only_a_reminder_and_not_a_focus_task() -> None:
@@ -211,6 +215,7 @@ def test_past_assessment_marked_needs_remake_is_actionable_again() -> None:
 
     assert [item.key for item in result.must] == [retake.key]
     assert result.verify == []
+    assert "manual_needs_remake" in result.must[0].reason_codes
 
 
 def test_past_due_nonassessment_can_still_be_actionable() -> None:

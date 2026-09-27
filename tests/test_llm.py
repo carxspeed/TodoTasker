@@ -101,6 +101,7 @@ def test_request_uses_first_ten_keys_and_exact_totals() -> None:
     assert request.moved_to_fallback == ["assignment:10", "assignment:11"]
     assert set(request.user["DATA"]["workload_totals"]) == set(TOTALS)
     assert request.user["DATA"]["guidance_input"][0]["locked_for_user"] is False
+    assert request.user["DATA"]["guidance_input"][0]["reason_codes"] == []
 
 
 def test_imminent_assessment_is_included_before_ordinary_backlog() -> None:
