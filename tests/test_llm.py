@@ -105,6 +105,29 @@ def test_request_uses_first_ten_keys_and_exact_totals() -> None:
     assert request.user["DATA"]["guidance_input"][0]["reason_codes"] == []
 
 
+def test_guidance_payload_contains_validated_scheduling_facts() -> None:
+    selected = task(1).model_copy(
+        update={
+            "kind": "quiz",
+            "due_at": datetime(2026, 9, 3, 16, tzinfo=timezone.utc),
+            "unlock_at": datetime(2026, 9, 3, 8, tzinfo=timezone.utc),
+            "submission_status": "unknown",
+            "needs_confirmation": True,
+            "reason_codes": ["submission_unknown", "due_within_24h"],
+        }
+    )
+
+    request = build_guidance_request([selected], [], TOTALS, date(2026, 9, 2))
+    payload = request.user["DATA"]["guidance_input"][0]
+
+    assert payload["kind"] == "quiz"
+    assert payload["due_at"] == "2026-09-03T16:00:00+00:00"
+    assert payload["unlock_at"] == "2026-09-03T08:00:00+00:00"
+    assert payload["submission_status"] == "unknown"
+    assert payload["needs_confirmation"] is True
+    assert payload["reason_codes"] == ["submission_unknown", "due_within_24h"]
+
+
 def test_imminent_assessment_is_included_before_ordinary_backlog() -> None:
     selected = [task(index) for index in range(10)]
     assessment = task(99).model_copy(
