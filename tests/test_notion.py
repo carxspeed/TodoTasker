@@ -199,7 +199,7 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
     assert property_ids["Course"] not in visible_school_ids
 
 
-def test_home_dashboard_uses_a_single_column_phone_safe_navigation() -> None:
+def test_home_dashboard_restores_colorful_full_width_navigation() -> None:
     urls = {
         title: f"https://notion.test/{title.lower().replace(' ', '-')}"
         for title in (
@@ -217,28 +217,38 @@ def test_home_dashboard_uses_a_single_column_phone_safe_navigation() -> None:
     blocks = home_dashboard_blocks(urls)
 
     assert blocks[0]["paragraph"]["rich_text"][0]["text"]["content"] == (
-        "Today first. Everything else when you need it."
+        "Your day, without the clutter."
     )
-    links = [
-        block["paragraph"]["rich_text"][0]["text"]
+    assert blocks[1]["callout"]["icon"]["emoji"] == "🎯"
+    assert blocks[1]["callout"]["color"] == "green_background"
+    cards = [
+        block["callout"]
         for block in blocks
-        if block["type"] == "paragraph"
-        and block["paragraph"]["rich_text"]
-        and block["paragraph"]["rich_text"][0]["text"].get("link")
+        if block["type"] == "callout"
     ]
-    assert [link["content"] for link in links] == [
-        "Open today's focus",
+    assert [card["rich_text"][0]["text"]["content"] for card in cards] == [
+        "Today",
         "Calendar",
-        "All tasks",
+        "All Tasks",
         "School",
         "Work",
         "Communications",
         "Misc",
         "Completed",
     ]
-    assert links[0]["link"]["url"] == urls["Today"]
-    assert links[-1]["link"]["url"] == urls["Completed"]
-    assert not [block for block in blocks if block["type"] == "quote"]
+    assert [card["color"] for card in cards] == [
+        "green_background",
+        "blue_background",
+        "gray_background",
+        "blue_background",
+        "orange_background",
+        "purple_background",
+        "yellow_background",
+        "gray_background",
+    ]
+    assert cards[-1]["icon"]["emoji"] == "✅"
+    assert cards[0]["rich_text"][0]["text"]["link"]["url"] == urls["Today"]
+    assert cards[-1]["rich_text"][0]["text"]["link"]["url"] == urls["Completed"]
     assert not [block for block in blocks if block["type"] == "column_list"]
 
 
@@ -712,7 +722,7 @@ def test_home_dashboard_rebuild_inserts_replacement_before_pages_container() -> 
     result = board.rebuild_home_dashboard()
 
     assert result["blocks_archived"] == 2
-    assert result["blocks_written"] == 17
+    assert result["blocks_written"] == 13
     assert fake.appended_blocks[0][2] == {"after": "old-marker"}
     assert fake.archived_blocks == ["old-marker", "old-card"]
 
@@ -767,7 +777,7 @@ def test_home_dashboard_rebuild_recovers_when_marker_text_is_missing() -> None:
 
     result = board.rebuild_home_dashboard()
 
-    assert result["blocks_written"] == 17
+    assert result["blocks_written"] == 13
     assert fake.appended_blocks[0][2] == {"after": "blank-marker"}
 
 
