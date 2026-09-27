@@ -124,14 +124,9 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
 
     assert list(specs) == [
         "Today",
-        "Due calendar",
         "Upcoming",
         "Active tasks",
-        "By area",
         "Needs attention",
-        "Submitted / waiting",
-        "History",
-        "_System",
     ]
     active = specs["Active tasks"]
     columns = active["configuration"]["properties"]
@@ -140,32 +135,11 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
     assert by_id[property_ids["Instructions"]]["width"] == 420
     assert by_id[property_ids["Focus rank"]]["visible"] is False
     assert by_id[property_ids["Source ID"]]["visible"] is False
-    calendar = specs["Due calendar"]
-    assert calendar["type"] == "calendar"
-    assert calendar["configuration"] == {
-        "type": "calendar",
-        "date_property_id": property_ids["Due"],
-        "properties": calendar["configuration"]["properties"],
-        "view_range": "month",
-        "show_weekends": True,
-    }
-    assert calendar["position"] == {"type": "start"}
-    assert calendar["filter"]["and"][-1] == {
-        "property": property_ids["Due"],
-        "date": {"is_not_empty": True},
-    }
     upcoming = specs["Upcoming"]
     assert upcoming["type"] == "list"
     assert upcoming["sorts"][0] == {
         "property": property_ids["Due"],
         "direction": "ascending",
-    }
-    by_area = specs["By area"]
-    assert by_area["configuration"]["group_by"] == {
-        "type": "select",
-        "property_id": property_ids["Area"],
-        "sort": {"type": "manual"},
-        "hide_empty_groups": True,
     }
     school = school_linked_view_spec(property_ids)
     assert school["filter"]["and"][-1] == {
@@ -1243,7 +1217,7 @@ def test_linked_database_title_uses_current_api() -> None:
     assert http.calls[0][2]["headers"]["Notion-Version"] == "2026-03-11"
 
 
-def test_rebuild_master_views_keeps_one_system_view_and_recreates_clean_order() -> None:
+def test_rebuild_master_views_keeps_rows_and_replaces_clutter_with_four_tabs() -> None:
     client = NotionClient("token", "")
     property_ids = {
         name: f"id-{index}" for index, name in enumerate(master_task_schema(), start=1)
@@ -1276,29 +1250,19 @@ def test_rebuild_master_views_keeps_one_system_view_and_recreates_clean_order() 
 
     urls = client.rebuild_master_task_views("master")
 
-    assert updated == [("old-system", "_System")]
+    assert updated == [("old-system", "Active tasks")]
     assert deleted == ["old-school", "old-work"]
     assert [item[2] for item in created] == [
-        "History",
-        "Submitted / waiting",
         "Needs attention",
-        "By area",
-        "Active tasks",
         "Upcoming",
-        "Due calendar",
         "Today",
     ]
     assert all(item[3] == {"type": "start"} for item in created)
     assert set(urls) == {
         "Today",
-        "Due calendar",
         "Upcoming",
         "Active tasks",
-        "By area",
         "Needs attention",
-        "Submitted / waiting",
-        "History",
-        "_System",
     }
 
 

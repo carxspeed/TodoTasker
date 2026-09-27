@@ -315,7 +315,9 @@ def _view_filter(property_id: str, kind: str, operator: str, value: Any) -> dict
     return {"property": property_id, kind: {operator: value}}
 
 
-def master_view_specs(property_ids: dict[str, str]) -> list[dict[str, Any]]:
+def master_view_specs(
+    property_ids: dict[str, str], *, primary_only: bool = True
+) -> list[dict[str, Any]]:
     """Return the idempotent human-facing view design for the master task data."""
     required = set(master_task_schema())
     missing = required - set(property_ids)
@@ -621,19 +623,24 @@ def master_view_specs(property_ids: dict[str, str]) -> list[dict[str, Any]]:
             },
         },
     ]
+    primary_names = {
+        "Today",
+        "Upcoming",
+        "Active tasks",
+        "Needs attention",
+    }
+    if primary_only:
+        specs = [spec for spec in specs if spec["name"] in primary_names]
+    else:
+        return specs
     order = {
         name: index
         for index, name in enumerate(
             (
                 "Today",
-                "Due calendar",
                 "Upcoming",
                 "Active tasks",
-                "By area",
                 "Needs attention",
-                "Submitted / waiting",
-                "History",
-                "_System",
             )
         )
     }
@@ -1170,13 +1177,13 @@ class NotionClient:
         )
 
     def ensure_master_task_views(self, database_id: str) -> dict[str, str]:
-        """Create or update the clean task views while retaining one hidden data source."""
+        """Create or update the four user-facing task views."""
         data_source_id, property_ids = self.master_property_ids(database_id)
         specs = master_view_specs(property_ids)
         existing = self.list_database_views(database_id)
         by_name = {str(view.get("name") or ""): view for view in existing}
-        if "_System" not in by_name and "All Tasks" in by_name:
-            by_name["_System"] = by_name.pop("All Tasks")
+        if "Active tasks" not in by_name and "All Tasks" in by_name:
+            by_name["Active tasks"] = by_name.pop("All Tasks")
 
         urls: dict[str, str] = {}
         for spec in specs:
@@ -1197,17 +1204,17 @@ class NotionClient:
         return urls
 
     def rebuild_master_task_views(self, database_id: str) -> dict[str, str]:
-        """Replace cluttered master tabs with the canonical ordered view set."""
+        """Replace cluttered master tabs with four canonical views; rows stay intact."""
         data_source_id, property_ids = self.master_property_ids(database_id)
         specs = master_view_specs(property_ids)
-        system_spec = next(spec for spec in specs if spec["name"] == "_System")
+        active_spec = next(spec for spec in specs if spec["name"] == "Active tasks")
         existing = self.list_database_views(database_id)
 
         keeper = next(
             (
                 view
                 for view in existing
-                if view.get("name") in {"_System", "All Tasks"}
+                if view.get("name") in {"Active tasks", "All Tasks", "_System"}
                 and view.get("type") == "table"
             ),
             None,
@@ -1217,9 +1224,9 @@ class NotionClient:
                 (view for view in existing if view.get("type") == "table"), None
             )
         if keeper is None:
-            keeper = self.create_view(database_id, data_source_id, system_spec)
+            keeper = self.create_view(database_id, data_source_id, active_spec)
         else:
-            keeper = self.update_view(str(keeper["id"]), system_spec)
+            keeper = self.update_view(str(keeper["id"]), active_spec)
         keeper_id = str(keeper["id"])
 
         for view in existing:
@@ -1228,10 +1235,10 @@ class NotionClient:
                 self.delete_view(view_id)
 
         urls: dict[str, str] = {}
-        system_url = str(keeper.get("url") or "")
-        if system_url:
-            urls["_System"] = system_url
-        for spec in reversed([item for item in specs if item["name"] != "_System"]):
+        active_url = str(keeper.get("url") or "")
+        if active_url:
+            urls["Active tasks"] = active_url
+        for spec in reversed([item for item in specs if item["name"] != "Active tasks"]):
             response = self.create_view(
                 database_id,
                 data_source_id,
@@ -1950,7 +1957,7 @@ class NotionSchoolBoard:
         data_source_id, property_ids = self.client.master_property_ids(database_id)
         spec = next(
             item
-            for item in master_view_specs(property_ids)
+            for item in master_view_specs(property_ids, primary_only=False)
             if item["name"] == "Due calendar"
         )
         response = self.client.create_linked_view(
