@@ -10,6 +10,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from daily_brief.config import ConfigurationError, load_settings
+from daily_brief.models import PreparedArtifact
 from daily_brief.notion import NotionSchoolBoard, summarize_master_migration
 from daily_brief.orchestrator import DailyBriefOrchestrator, LiveSourceProvider
 from daily_brief.runtime import DeferredHealthyLock, HeartbeatLock
@@ -55,6 +56,11 @@ def parse_args() -> argparse.Namespace:
         command.add_argument("--dry-run", action="store_true")
     watchdog = sub.add_parser("watchdog")
     watchdog.add_argument("--target-date", type=date.fromisoformat)
+    status = sub.add_parser(
+        "status",
+        help="Show source, AI, and delivery health without exposing private task text",
+    )
+    status.add_argument("--target-date", type=date.fromisoformat)
     migration = sub.add_parser(
         "migrate-notion",
         help="Preview or apply the safe migration into the unified Tasks database",
@@ -73,6 +79,60 @@ def parse_args() -> argparse.Namespace:
         help="Only report the migration plan (the default)",
     )
     return parser.parse_args()
+
+
+def _runtime_status_lines(target: date, state_dir: Path = Path("state")) -> list[str]:
+    prepared_path = state_dir / "prepared" / f"{target.isoformat()}.json"
+    try:
+        artifact = PreparedArtifact.model_validate_json(
+            prepared_path.read_text(encoding="utf-8")
+        )
+    except FileNotFoundError:
+        return [f"target={target.isoformat()}", "prepared=false"]
+    except (OSError, ValueError):
+        return [
+            f"target={target.isoformat()}",
+            "prepared=invalid",
+            "action=run prepare again",
+        ]
+    selected_count = sum(
+        len(items)
+        for items in (
+            artifact.classification.must,
+            artifact.classification.smart,
+            artifact.classification.may,
+        )
+    )
+    diagnostics = artifact.guidance_diagnostics
+    source_status = " ".join(
+        f"{name}={status}" for name, status in sorted(artifact.sources.statuses.items())
+    )
+    lines = [
+        f"target={target.isoformat()}",
+        "prepared=true",
+        f"prepared_at={artifact.prepared_at.isoformat()}",
+        f"sources={source_status}",
+        f"selected_tasks={selected_count}",
+        f"ai_source={diagnostics.source}",
+        f"ai_model={diagnostics.model or 'none'}",
+        f"ai_status={diagnostics.status}",
+        f"ai_attempts={diagnostics.attempts}",
+        f"ai_failure={diagnostics.failure_code or 'none'}",
+    ]
+    log_path = state_dir / "runs.log"
+    try:
+        latest = next(
+            (
+                line.strip()
+                for line in reversed(log_path.read_text(encoding="utf-8").splitlines())
+                if line.strip()
+            ),
+            "",
+        )
+    except OSError:
+        latest = ""
+    lines.append(f"latest_delivery={latest or 'none'}")
+    return lines
 
 
 def _run_notion_migration(
@@ -129,6 +189,10 @@ def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     args = parse_args()
+    if args.command == "status":
+        target = args.target_date or date.today()
+        print("\n".join(_runtime_status_lines(target)))
+        return 0
     try:
         settings = load_settings()
         timezone = ZoneInfo(settings.timezone)

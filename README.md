@@ -441,6 +441,9 @@ venv\Scripts\python.exe manage_secrets.py audit
 venv\Scripts\python.exe manage_secrets.py status
 venv\Scripts\python.exe canvas.py auth-check
 
+# See whether Canvas/Notion/Calendar loaded and which AI produced today's plan
+venv\Scripts\python.exe brief.py status
+
 # Create the initial encrypted Canvas session (automatic renewal handles later expiry)
 venv\Scripts\python.exe canvas.py login
 
