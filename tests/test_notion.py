@@ -124,12 +124,13 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
     }
     specs = {spec["name"]: spec for spec in master_view_specs(property_ids)}
 
-    assert list(specs) == ["All tasks"]
-    active = specs["All tasks"]
+    assert list(specs) == ["Active"]
+    active = specs["Active"]
+    assert active["type"] == "list"
     columns = active["configuration"]["properties"]
     by_id = {column["property_id"]: column for column in columns}
-    assert by_id[property_ids["Next step"]]["width"] == 420
-    assert by_id[property_ids["Instructions"]]["width"] == 420
+    assert by_id[property_ids["Next step"]]["visible"] is True
+    assert by_id[property_ids["Instructions"]]["visible"] is False
     assert by_id[property_ids["Focus rank"]]["visible"] is False
     assert by_id[property_ids["Source ID"]]["visible"] is False
     all_specs = {
@@ -1544,9 +1545,9 @@ def test_rebuild_master_views_keeps_rows_and_replaces_clutter_with_canonical_tab
 
     assert updated == []
     assert deleted == ["old-system", "old-school", "old-work"]
-    assert [item[2] for item in created] == ["All tasks"]
+    assert [item[2] for item in created] == ["Active"]
     assert all(item[3] == {"type": "start"} for item in created)
-    assert set(urls) == {"All tasks"}
+    assert set(urls) == {"Active"}
 
 
 def test_query_paginates_and_normalizes_by_page_id() -> None:

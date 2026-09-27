@@ -408,17 +408,26 @@ def master_view_specs(
     ]
     specs = [
         {
-            "name": "All tasks",
-            "type": "table",
+            "name": "Active",
+            "type": "list",
             "filter": active_filter(),
             "sorts": active_sorts,
             "quick_filters": {},
             "configuration": {
-                "type": "table",
-                "properties": properties(table=True),
-                "wrap_cells": False,
-                "frozen_column_index": 1,
-                "show_vertical_lines": True,
+                "type": "list",
+                "properties": properties(
+                    [
+                        "Task",
+                        "Open",
+                        "Status",
+                        "Due",
+                        "Course",
+                        "Display type",
+                        "Priority",
+                        "Next step",
+                        "Notes / progress",
+                    ]
+                ),
             },
             "position": {"type": "start"},
         },
@@ -691,7 +700,7 @@ def master_view_specs(
             },
         }
     )
-    primary_names = {"All tasks"}
+    primary_names = {"Active"}
     if primary_only:
         specs = [spec for spec in specs if spec["name"] in primary_names]
     else:
@@ -1391,10 +1400,10 @@ class NotionClient:
         specs = master_view_specs(property_ids)
         existing = self.list_database_views(database_id)
         by_name = {str(view.get("name") or ""): view for view in existing}
-        if "All tasks" not in by_name:
-            for legacy_name in ("All Tasks", "Active tasks"):
+        if "Active" not in by_name:
+            for legacy_name in ("All tasks", "All Tasks", "Active tasks"):
                 if legacy_name in by_name:
-                    by_name["All tasks"] = by_name.pop(legacy_name)
+                    by_name["Active"] = by_name.pop(legacy_name)
                     break
 
         urls: dict[str, str] = {}
@@ -1402,11 +1411,14 @@ class NotionClient:
             current = by_name.get(spec["name"])
             if current is not None:
                 if current.get("type") != spec["type"]:
-                    raise NotionError(
-                        f"Notion view {spec['name']} has type {current.get('type')}; "
-                        f"expected {spec['type']}"
+                    response = self.create_view(
+                        database_id,
+                        data_source_id,
+                        {**spec, "position": {"type": "start"}},
                     )
-                response = self.update_view(str(current["id"]), spec)
+                    self.delete_view(str(current["id"]))
+                else:
+                    response = self.update_view(str(current["id"]), spec)
             else:
                 response = self.create_view(database_id, data_source_id, spec)
             fallback_url = str(current.get("url") or "") if current else ""
