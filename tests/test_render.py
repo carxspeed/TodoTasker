@@ -2,7 +2,12 @@ from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 from daily_brief.models import ClassificationOutput, ClassifiedItem, FocusPlan, GuidanceItem, GuidanceResult
-from daily_brief.render import deterministic_guidance, render_brief, select_focus_items
+from daily_brief.render import (
+    deterministic_guidance,
+    render_brief,
+    resolved_guidance,
+    select_focus_items,
+)
 
 
 def item(key, source="canvas", next_step=""):
@@ -44,7 +49,7 @@ def test_guidance_is_inserted_only_under_matching_key() -> None:
     )
     text = render_brief(classification(items), guidance=guidance)
     assert text.index("Specific second step.") > text.index("Canonical assignment:2")
-    assert "Open the assignment" in text
+    assert "Open Canonical assignment:1 and complete only its first listed step." in text
 
 
 def test_updated_header_is_explicit() -> None:
@@ -120,3 +125,39 @@ def test_locked_task_guidance_explains_why_it_is_not_actionable() -> None:
     )
 
     assert deterministic_guidance(locked).startswith("Locked in Canvas")
+
+
+def test_generic_model_wording_is_replaced_with_a_small_specific_start() -> None:
+    webassign = item("assignment:webassign").model_copy(
+        update={
+            "name": "Electric fields problem set",
+            "description": "Go to WebAssign and complete the problem set.",
+        }
+    )
+
+    step = resolved_guidance(
+        webassign, "Open the Canvas assignment and review its requirements."
+    )
+
+    assert step == "Open WebAssign and complete the first unsolved problem."
+
+
+def test_specific_model_wording_is_preserved() -> None:
+    worksheet = item("assignment:worksheet")
+
+    assert resolved_guidance(
+        worksheet, "Answer questions 1–3 in the Federalist 51 worksheet."
+    ) == "Answer questions 1–3 in the Federalist 51 worksheet."
+
+
+def test_large_canvas_work_gets_one_bounded_first_action() -> None:
+    project = item("assignment:project").model_copy(
+        update={
+            "name": "Teach Me Project",
+            "description": "Use the project board to create a presentation.",
+        }
+    )
+
+    assert deterministic_guidance(project) == (
+        "Create the Teach Me Project file and list the first three required parts."
+    )

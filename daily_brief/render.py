@@ -6,31 +6,20 @@ import re
 from datetime import datetime, timedelta, tzinfo
 
 from .models import CalendarSnapshot, CanvasEnvelope, ClassificationOutput, ClassifiedItem, GuidanceResult
+from .steps import deterministic_guidance, is_generic_guidance
 
 
 def _format_hours(value: float) -> str:
     return f"{value:.1f}".rstrip("0").rstrip(".")
 
 
-def deterministic_guidance(item: ClassifiedItem) -> str:
-    if item.locked_for_user:
-        return "Locked in Canvas—keep it visible and check again when it becomes available."
-    if item.kind == "planner_assessment":
-        return "Study the topics listed in the class planner, then do a short practice check."
-    if item.source == "notion" and (not item.next_step.strip() or "unknown" in item.next_step.casefold()):
-        return "Next step unknown — spend 10 minutes scoping it."
-    if item.source == "notion":
-        return item.next_step.strip()
-    if item.user_notes.strip():
-        return f"Continue from your Notion note: {item.user_notes.strip()}"
-    return "Open the assignment, review the requirements, and complete the first concrete part."
-
-
 def resolved_guidance(item: ClassifiedItem, model_guidance: str = "") -> str:
     """Apply non-negotiable task-state guidance after optional model wording."""
-    if item.locked_for_user:
+    if item.locked_for_user or item.kind == "planner_assessment":
         return deterministic_guidance(item)
-    return model_guidance or deterministic_guidance(item)
+    if is_generic_guidance(model_guidance):
+        return deterministic_guidance(item)
+    return model_guidance.strip()
 
 
 def _format_due(value: datetime | None, display_timezone: tzinfo) -> str:

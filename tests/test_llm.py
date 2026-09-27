@@ -306,6 +306,22 @@ def test_local_generation_makes_exactly_one_chat_call() -> None:
     assert "tools" not in session.payload
 
 
+def test_generation_repairs_generic_canvas_wording_without_an_extra_model_call() -> None:
+    selected = task(1, description="Go to WebAssign and complete the problem set.")
+    request = build_guidance_request([selected], [], TOTALS, date(2026, 9, 2))
+    session = Session(response_for(request.keys))
+
+    result = generate_guidance(
+        [selected], [], TOTALS, date(2026, 9, 2), session=session
+    )
+
+    assert result is not None
+    assert result.task_guidance[0].guidance == (
+        "Open WebAssign and complete the first unsolved problem."
+    )
+    assert session.post_calls == 1
+
+
 def test_local_generation_starts_ollama_when_service_is_off(monkeypatch) -> None:
     request = build_guidance_request([task(1)], [], TOTALS, date(2026, 9, 2))
 
