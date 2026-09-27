@@ -282,7 +282,6 @@ class FakeSchoolClient:
         self.archived_databases = []
         self.linked_views = []
         self.updated_database_titles = []
-        self.updated_database_icons = []
         self.updated_page_icons = []
         self.moved_pages = []
         self.database_parent_updates = []
@@ -379,10 +378,6 @@ class FakeSchoolClient:
 
     def update_database_parent_and_icon(self, database_id, parent_page_id, icon):
         self.database_parent_updates.append((database_id, parent_page_id, icon))
-        return {"id": database_id}
-
-    def update_database_icon(self, database_id, icon):
-        self.updated_database_icons.append((database_id, icon))
         return {"id": database_id}
 
 
@@ -704,7 +699,6 @@ def test_home_dashboard_rebuild_inserts_replacement_before_pages_container() -> 
     assert result["blocks_written"] == 13
     assert fake.appended_blocks[0][2] == {"after": "old-marker"}
     assert fake.archived_blocks == ["old-marker", "old-card"]
-    assert fake.updated_database_icons == [("master-db", None)]
 
 
 def test_legacy_layout_archive_is_narrow_and_requires_preserved_rows() -> None:

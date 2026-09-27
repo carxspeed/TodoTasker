@@ -1551,27 +1551,18 @@ class NotionClient:
     def update_database_parent_and_icon(
         self, database_id: str, parent_page_id: str, icon: str | None
     ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "parent": {
+                "type": "page_id",
+                "page_id": parent_page_id.replace("-", ""),
+            }
+        }
+        if icon:
+            payload["icon"] = {"type": "emoji", "emoji": icon}
         return self._json(
             "PATCH",
             f"/databases/{database_id.replace('-', '')}",
-            payload={
-                "parent": {
-                    "type": "page_id",
-                    "page_id": parent_page_id.replace("-", ""),
-                },
-                "icon": {"type": "emoji", "emoji": icon} if icon else None,
-            },
-            idempotent=True,
-            headers=self.view_headers,
-        )
-
-    def update_database_icon(
-        self, database_id: str, icon: str | None
-    ) -> dict[str, Any]:
-        return self._json(
-            "PATCH",
-            f"/databases/{database_id.replace('-', '')}",
-            payload={"icon": {"type": "emoji", "emoji": icon} if icon else None},
+            payload=payload,
             idempotent=True,
             headers=self.view_headers,
         )
@@ -2508,7 +2499,6 @@ class NotionSchoolBoard:
             self.client.update_page_icon(page_id, None)
         self.client.update_page_icon(navigation_page_id, None)
         self.client.update_page_icon(self.parent_page_id, None)
-        self.client.update_database_icon(database_id, None)
         return {
             "blocks_written": len(new_blocks),
             "blocks_archived": archived,
