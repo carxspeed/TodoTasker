@@ -2506,6 +2506,18 @@ class NotionSchoolBoard:
             ),
             None,
         )
+        if marker is None:
+            legacy_titles = {
+                self._block_plain_text(block).splitlines()[0]
+                for block in generated_blocks
+                if self._block_plain_text(block)
+            }
+            if {"Today", "Calendar", "All Tasks", "Plan", "Areas"}.issubset(
+                legacy_titles
+            ):
+                # Some Notion responses omit plain_text on the old marker even
+                # while the rest of our generated navigation is still present.
+                marker = generated_blocks[0] if generated_blocks else None
         marker_id = str((marker or {}).get("id") or "")
         if not marker_id:
             raise NotionError("generated home dashboard marker was not found")

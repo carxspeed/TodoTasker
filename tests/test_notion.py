@@ -717,6 +717,60 @@ def test_home_dashboard_rebuild_inserts_replacement_before_pages_container() -> 
     assert fake.archived_blocks == ["old-marker", "old-card"]
 
 
+def test_home_dashboard_rebuild_recovers_when_marker_text_is_missing() -> None:
+    fake = FakeSchoolClient()
+    page_titles = [
+        "Today",
+        "Calendar",
+        "School",
+        "Work",
+        "Communications",
+        "Misc",
+        "Completed",
+    ]
+    legacy_blocks = [{"id": "blank-marker", "type": "paragraph", "paragraph": {"rich_text": []}}]
+    for title in ("Today", "Calendar", "All Tasks", "Plan", "Areas"):
+        block_type = "heading_2" if title in {"Plan", "Areas"} else "quote"
+        legacy_blocks.append(
+            {
+                "id": f"legacy-{title.lower().replace(' ', '-')}",
+                "type": block_type,
+                block_type: {"rich_text": [{"plain_text": title}]},
+            }
+        )
+    fake.children_by_page = {
+        "parent": [
+            *legacy_blocks,
+            {
+                "id": "pages-container",
+                "type": "child_page",
+                "child_page": {"title": "Pages"},
+            },
+        ],
+        "pages-container": [
+            *[
+                {
+                    "id": f"page-{title.lower()}",
+                    "type": "child_page",
+                    "child_page": {"title": title},
+                }
+                for title in page_titles
+            ],
+            {
+                "id": "master-db",
+                "type": "child_database",
+                "child_database": {"title": "All Tasks"},
+            },
+        ],
+    }
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    result = board.rebuild_home_dashboard()
+
+    assert result["blocks_written"] == 4
+    assert fake.appended_blocks[0][2] == {"after": "blank-marker"}
+
+
 def test_legacy_layout_archive_is_narrow_and_requires_preserved_rows() -> None:
     fake = FakeSchoolClient()
     fake.children_by_page = {
