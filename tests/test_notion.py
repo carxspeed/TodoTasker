@@ -21,6 +21,7 @@ from daily_brief.notion import (
     master_task_schema,
     master_view_specs,
     task_area_page_specs,
+    home_dashboard_blocks,
     school_linked_view_spec,
     notion_master_task_fields,
     school_assignment_fields,
@@ -182,6 +183,43 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
     assert property_ids["Course"] not in visible_school_ids
 
 
+def test_home_dashboard_uses_a_hero_and_phone_stacking_card_rows() -> None:
+    urls = {
+        title: f"https://notion.test/{title.lower().replace(' ', '-')}"
+        for title in (
+            "Today",
+            "Calendar",
+            "All Tasks",
+            "School",
+            "Work",
+            "Communications",
+            "Misc",
+            "Completed",
+        )
+    }
+
+    blocks = home_dashboard_blocks(urls)
+
+    assert blocks[0]["paragraph"]["rich_text"][0]["text"]["content"] == (
+        "Your day, without the clutter."
+    )
+    assert blocks[1]["callout"]["icon"]["emoji"] == "🎯"
+    assert blocks[1]["callout"]["color"] == "green_background"
+    rows = [block for block in blocks if block["type"] == "column_list"]
+    assert len(rows) == 3
+    assert all(len(row["column_list"]["children"]) == 2 for row in rows)
+    assert all(
+        len(column["column"]["children"]) == 1
+        for row in rows
+        for column in row["column_list"]["children"]
+    )
+    completed = blocks[-2]
+    assert completed["callout"]["icon"]["emoji"] == "✅"
+    assert completed["callout"]["rich_text"][0]["text"]["link"]["url"] == (
+        urls["Completed"]
+    )
+
+
 def test_school_assignment_payload_includes_source_id_and_safe_next_step() -> None:
     assignment = load_fixture("fixtures/sample_todo.json").assignments[0]
     fields = school_assignment_fields(
@@ -238,6 +276,9 @@ class FakeSchoolClient:
         self.archived_databases = []
         self.linked_views = []
         self.updated_database_titles = []
+        self.updated_page_icons = []
+        self.moved_pages = []
+        self.database_parent_updates = []
 
     def retrieve_page(self, page_id):
         return {"id": page_id, "url": "https://notion.test/tasks"}
@@ -319,6 +360,18 @@ class FakeSchoolClient:
 
     def update_database_title(self, database_id, title):
         self.updated_database_titles.append((database_id, title))
+        return {"id": database_id}
+
+    def update_page_icon(self, page_id, icon):
+        self.updated_page_icons.append((page_id, icon))
+        return {"id": page_id}
+
+    def move_page(self, page_id, parent_page_id):
+        self.moved_pages.append((page_id, parent_page_id))
+        return {"id": page_id}
+
+    def update_database_parent_and_icon(self, database_id, parent_page_id, icon):
+        self.database_parent_updates.append((database_id, parent_page_id, icon))
         return {"id": database_id}
 
 
@@ -472,7 +525,9 @@ def test_calendar_page_gets_one_master_backed_due_view() -> None:
 
     assert result["page_id"] == "today-page"
     assert result["page_created"] is True
-    assert fake.created_pages == [("Calendar", {"parent_page_id": "parent"})]
+    assert fake.created_pages == [
+        ("Calendar", {"parent_page_id": "parent", "icon": "🗓️"})
+    ]
     parent_id, source_id, spec = fake.linked_views[0]
     assert parent_id == "today-page"
     assert source_id == "master-source"
@@ -526,6 +581,67 @@ def test_task_areas_get_separate_one_view_pages_backed_by_master_data() -> None:
         ("linked-db", "Misc tasks"),
         ("linked-db", "Completed tasks"),
     ]
+
+
+def test_home_dashboard_preserves_pages_and_moves_them_behind_visual_cards() -> None:
+    fake = FakeSchoolClient()
+    page_titles = [
+        "Today",
+        "Calendar",
+        "School",
+        "Work",
+        "Communications",
+        "Misc",
+        "Completed",
+    ]
+    fake.children_by_page = {
+        "parent": [
+            *[
+                {
+                    "id": f"page-{title.lower()}",
+                    "type": "child_page",
+                    "child_page": {"title": title},
+                }
+                for title in page_titles
+            ],
+            {
+                "id": "master-db",
+                "type": "child_database",
+                "child_database": {"title": "All Tasks"},
+            },
+        ],
+        "pages-container": [],
+    }
+
+    def create_navigation(title, **kwargs):
+        fake.created_pages.append((title, kwargs))
+        return {"id": "pages-container", "url": "https://notion.test/pages"}
+
+    fake.create_child_page = create_navigation
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    result = board.ensure_home_dashboard()
+
+    assert result["dashboard_created"] is True
+    assert result["navigation_created"] is True
+    assert result["moved_pages"] == tuple(page_titles)
+    assert result["database_moved"] is True
+    assert fake.created_pages == [
+        (
+            "Pages",
+            {"parent_page_id": "parent", "icon": "🗂️"},
+        )
+    ]
+    assert len(fake.appended_blocks) == 1
+    assert fake.appended_blocks[0][0] == "parent"
+    assert [page_id for page_id, _ in fake.moved_pages] == [
+        f"page-{title.lower()}" for title in page_titles
+    ]
+    assert all(parent_id == "pages-container" for _, parent_id in fake.moved_pages)
+    assert fake.database_parent_updates == [
+        ("master-db", "pages-container", "📋")
+    ]
+    assert ("parent", "✅") in fake.updated_page_icons
 
 
 def test_legacy_layout_archive_is_narrow_and_requires_preserved_rows() -> None:
@@ -1084,7 +1200,9 @@ def test_focus_dashboard_is_phone_first_and_links_exact_task_rows() -> None:
 
     assert result.url == "https://notion.test/today"
     assert result.page_created is True
-    assert fake.created_pages == [("Today", {"parent_page_id": "parent"})]
+    assert fake.created_pages == [
+        ("Today", {"parent_page_id": "parent", "icon": "🎯"})
+    ]
     assert len(fake.appended_blocks) == 1
     blocks = fake.appended_blocks[0][1]
     assert [block["type"] for block in blocks] == ["paragraph", "callout", "paragraph"]
@@ -1277,6 +1395,42 @@ def test_linked_database_title_uses_current_api() -> None:
     )
     assert http.calls[0][2]["json"]["title"][0]["text"]["content"] == "School tasks"
     assert http.calls[0][2]["headers"]["Notion-Version"] == "2026-03-11"
+
+
+def test_home_layout_api_moves_pages_and_database_without_recreating_them() -> None:
+    http = FakeHttp([{"id": "page"}, {"id": "page"}, {"id": "database"}])
+    client = NotionClient("token", "", http=http)
+
+    client.update_page_icon("page", "🎯")
+    client.move_page("page", "pages-container")
+    client.update_database_parent_and_icon("database", "pages-container", "📋")
+
+    assert http.calls[0][0:2] == (
+        "PATCH",
+        "https://api.notion.com/v1/pages/page",
+    )
+    assert http.calls[0][2]["json"] == {
+        "icon": {"type": "emoji", "emoji": "🎯"}
+    }
+    assert http.calls[1][0:2] == (
+        "POST",
+        "https://api.notion.com/v1/pages/page/move",
+    )
+    assert http.calls[1][2]["json"] == {
+        "parent": {"type": "page_id", "page_id": "pagescontainer"}
+    }
+    assert http.calls[2][0:2] == (
+        "PATCH",
+        "https://api.notion.com/v1/databases/database",
+    )
+    assert http.calls[2][2]["json"] == {
+        "parent": {"type": "page_id", "page_id": "pagescontainer"},
+        "icon": {"type": "emoji", "emoji": "📋"},
+    }
+    assert all(
+        call[2]["headers"]["Notion-Version"] == "2026-03-11"
+        for call in http.calls
+    )
 
 
 def test_rebuild_master_views_keeps_rows_and_replaces_clutter_with_canonical_tabs() -> None:

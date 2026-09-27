@@ -28,6 +28,8 @@ SCHOOL_PRIORITIES = ["MUST", "SMART", "MAY", "Later", "Verify"]
 SCHOOL_KINDS = ["assignment", "quiz", "discussion_topic", "sub_assignment"]
 DAILY_PLAN_TITLE = "Today's Focus"
 FOCUS_DASHBOARD_TITLE = "Today"
+NAVIGATION_PAGE_TITLE = "Pages"
+HOME_DASHBOARD_MARKER = "Your day, without the clutter."
 DAILY_PLAN_STATUSES = ["To do", "Done"]
 MASTER_TASK_TITLE = "All Tasks"
 LEGACY_MASTER_TASK_TITLES = ("Tasks",)
@@ -709,6 +711,190 @@ def task_area_page_specs(property_ids: dict[str, str]) -> dict[str, dict[str, An
         page_title: {**available[source_name], "name": "Tasks"}
         for page_title, source_name in page_sources.items()
     }
+
+
+def _navigation_card(
+    title: str,
+    description: str,
+    url: str,
+    *,
+    icon: str,
+    color: str,
+) -> dict[str, Any]:
+    return {
+        "object": "block",
+        "type": "callout",
+        "callout": {
+            "rich_text": [
+                {
+                    "type": "text",
+                    "text": {"content": title, "link": {"url": url}},
+                    "annotations": {"bold": True},
+                },
+                {
+                    "type": "text",
+                    "text": {"content": f"\n{description}"},
+                    "annotations": {"color": "gray"},
+                },
+            ],
+            "icon": {"type": "emoji", "emoji": icon},
+            "color": color,
+        },
+    }
+
+
+def _navigation_row(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    """Create a two-card row that naturally stacks in reading order on phones."""
+    return {
+        "object": "block",
+        "type": "column_list",
+        "column_list": {
+            "children": [
+                {
+                    "object": "block",
+                    "type": "column",
+                    "column": {"width_ratio": 0.5, "children": [left]},
+                },
+                {
+                    "object": "block",
+                    "type": "column",
+                    "column": {"width_ratio": 0.5, "children": [right]},
+                },
+            ]
+        },
+    }
+
+
+def home_dashboard_blocks(urls: dict[str, str]) -> list[dict[str, Any]]:
+    """Build the calm, phone-friendly home navigation without duplicating data."""
+    required = {
+        "Today",
+        "Calendar",
+        "All Tasks",
+        "School",
+        "Work",
+        "Communications",
+        "Misc",
+        "Completed",
+    }
+    missing = required - set(urls)
+    if missing:
+        raise NotionError(
+            "Cannot build the home dashboard without: " + ", ".join(sorted(missing))
+        )
+
+    def heading(content: str) -> dict[str, Any]:
+        return {
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {"content": content},
+                        "annotations": {"bold": True, "color": "gray"},
+                    }
+                ],
+                "is_toggleable": False,
+                "color": "default",
+            },
+        }
+
+    return [
+        {
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {"content": HOME_DASHBOARD_MARKER},
+                        "annotations": {"italic": True, "color": "gray"},
+                    }
+                ]
+            },
+        },
+        _navigation_card(
+            "Today",
+            "Start here for your priorities and reminders.",
+            urls["Today"],
+            icon="🎯",
+            color="green_background",
+        ),
+        heading("Plan"),
+        _navigation_row(
+            _navigation_card(
+                "Calendar",
+                "See what is due on any day.",
+                urls["Calendar"],
+                icon="🗓️",
+                color="blue_background",
+            ),
+            _navigation_card(
+                "All Tasks",
+                "Search and review everything.",
+                urls["All Tasks"],
+                icon="📋",
+                color="gray_background",
+            ),
+        ),
+        heading("Areas"),
+        _navigation_row(
+            _navigation_card(
+                "School",
+                "Classes, assignments, and assessments.",
+                urls["School"],
+                icon="🎓",
+                color="blue_background",
+            ),
+            _navigation_card(
+                "Work",
+                "Projects and personal work.",
+                urls["Work"],
+                icon="💼",
+                color="orange_background",
+            ),
+        ),
+        _navigation_row(
+            _navigation_card(
+                "Communications",
+                "People, replies, and follow-ups.",
+                urls["Communications"],
+                icon="💬",
+                color="purple_background",
+            ),
+            _navigation_card(
+                "Misc",
+                "Everything that belongs elsewhere.",
+                urls["Misc"],
+                icon="🧩",
+                color="yellow_background",
+            ),
+        ),
+        {"object": "block", "type": "divider", "divider": {}},
+        _navigation_card(
+            "Completed",
+            "Done, submitted, waiting, and archived tasks.",
+            urls["Completed"],
+            icon="✅",
+            color="gray_background",
+        ),
+        {
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "TodoTasker keeps these pages synced automatically."
+                        },
+                        "annotations": {"color": "gray"},
+                    }
+                ]
+            },
+        },
+    ]
 
 
 def school_linked_view_spec(property_ids: dict[str, str]) -> dict[str, Any]:
@@ -1403,6 +1589,23 @@ class NotionClient:
             headers=self.view_headers,
         )
 
+    def update_database_parent_and_icon(
+        self, database_id: str, parent_page_id: str, icon: str
+    ) -> dict[str, Any]:
+        return self._json(
+            "PATCH",
+            f"/databases/{database_id.replace('-', '')}",
+            payload={
+                "parent": {
+                    "type": "page_id",
+                    "page_id": parent_page_id.replace("-", ""),
+                },
+                "icon": {"type": "emoji", "emoji": icon},
+            },
+            idempotent=True,
+            headers=self.view_headers,
+        )
+
     def query_database_pages(self, database_id: str) -> list[dict[str, Any]]:
         payload: dict[str, Any] = {"page_size": 100}
         pages: list[dict[str, Any]] = []
@@ -1426,17 +1629,48 @@ class NotionClient:
             payload = {**payload, "start_cursor": cursor}
 
     def create_child_page(
-        self, title: str, *, parent_page_id: str | None = None
+        self,
+        title: str,
+        *,
+        parent_page_id: str | None = None,
+        icon: str | None = None,
     ) -> dict[str, Any]:
         parent_id = (parent_page_id or self.parent_page_id).replace("-", "")
+        payload: dict[str, Any] = {
+            "parent": {"type": "page_id", "page_id": parent_id},
+            "properties": {"title": title_property(_bounded(title, 200))},
+        }
+        if icon:
+            payload["icon"] = {"type": "emoji", "emoji": icon}
         return self._json(
             "POST",
             "/pages",
-            payload={
-                "parent": {"type": "page_id", "page_id": parent_id},
-                "properties": {"title": title_property(_bounded(title, 200))},
-            },
+            payload=payload,
             idempotent=False,
+            headers=self.view_headers,
+        )
+
+    def update_page_icon(self, page_id: str, icon: str) -> dict[str, Any]:
+        return self._json(
+            "PATCH",
+            f"/pages/{page_id.replace('-', '')}",
+            payload={"icon": {"type": "emoji", "emoji": icon}},
+            idempotent=True,
+            headers=self.view_headers,
+        )
+
+    def move_page(self, page_id: str, parent_page_id: str) -> dict[str, Any]:
+        return self._json(
+            "POST",
+            f"/pages/{page_id.replace('-', '')}/move",
+            payload={
+                "parent": {
+                    "type": "page_id",
+                    "page_id": parent_page_id.replace("-", ""),
+                }
+            },
+            idempotent=True,
+            headers=self.view_headers,
         )
 
     def create_database(
@@ -1699,12 +1933,18 @@ class NotionSchoolBoard:
         return databases
 
     def _master_task_database(self) -> str | None:
-        databases = self._child_databases(
-            self.client.list_block_children(self.parent_page_id)
+        root_children = self.client.list_block_children(self.parent_page_id)
+        scopes = [root_children]
+        navigation_page_id = self._child_pages(root_children).get(
+            NAVIGATION_PAGE_TITLE
         )
-        for title in (MASTER_TASK_TITLE, *LEGACY_MASTER_TASK_TITLES):
-            if title in databases:
-                return databases[title]
+        if navigation_page_id:
+            scopes.append(self.client.list_block_children(navigation_page_id))
+        for children in scopes:
+            databases = self._child_databases(children)
+            for title in (MASTER_TASK_TITLE, *LEGACY_MASTER_TASK_TITLES):
+                if title in databases:
+                    return databases[title]
         return None
 
     @staticmethod
@@ -1717,6 +1957,28 @@ class NotionSchoolBoard:
             if title and title not in pages:
                 pages[title] = str(child["id"])
         return pages
+
+    def _navigation_parent_and_children(self) -> tuple[str, list[dict[str, Any]]]:
+        """Return the visual-pages container, falling back to the root layout."""
+        root_children = self.client.list_block_children(self.parent_page_id)
+        navigation_page_id = self._child_pages(root_children).get(
+            NAVIGATION_PAGE_TITLE
+        )
+        if navigation_page_id:
+            return (
+                navigation_page_id,
+                self.client.list_block_children(navigation_page_id),
+            )
+        return self.parent_page_id, root_children
+
+    @staticmethod
+    def _block_plain_text(block: dict[str, Any]) -> str:
+        block_type = str(block.get("type") or "")
+        body = block.get(block_type) or {}
+        return "".join(
+            str(item.get("plain_text") or (item.get("text") or {}).get("content") or "")
+            for item in body.get("rich_text") or []
+        ).strip()
 
     @staticmethod
     def _focus_task_block(task: NotificationTask, *, rank: int) -> dict[str, Any]:
@@ -1768,14 +2030,18 @@ class NotionSchoolBoard:
         full_tasks_url: str = "",
     ) -> FocusDashboardSyncResult:
         """Replace the generated, phone-first Today page with the current focus."""
-        root_children = self.client.list_block_children(self.parent_page_id)
-        page_id = self._child_pages(root_children).get(FOCUS_DASHBOARD_TITLE)
+        navigation_parent_id, navigation_children = (
+            self._navigation_parent_and_children()
+        )
+        page_id = self._child_pages(navigation_children).get(FOCUS_DASHBOARD_TITLE)
         created = False
         if page_id:
             page = self.client.retrieve_page(page_id)
         else:
             page = self.client.create_child_page(
-                FOCUS_DASHBOARD_TITLE, parent_page_id=self.parent_page_id
+                FOCUS_DASHBOARD_TITLE,
+                parent_page_id=navigation_parent_id,
+                icon="🎯",
             )
             page_id = str(page["id"])
             created = True
@@ -1980,12 +2246,14 @@ class NotionSchoolBoard:
 
     def create_calendar_task_view(self) -> dict[str, Any]:
         """Create a dedicated Calendar page backed by the master Due property."""
-        root_children = self.client.list_block_children(self.parent_page_id)
-        page_id = self._child_pages(root_children).get("Calendar")
+        navigation_parent_id, navigation_children = (
+            self._navigation_parent_and_children()
+        )
+        page_id = self._child_pages(navigation_children).get("Calendar")
         page_created = False
         if not page_id:
             page = self.client.create_child_page(
-                "Calendar", parent_page_id=self.parent_page_id
+                "Calendar", parent_page_id=navigation_parent_id, icon="🗓️"
             )
             page_id = str(page.get("id") or "")
             if not page_id:
@@ -2024,14 +2292,16 @@ class NotionSchoolBoard:
 
     def ensure_task_area_pages(self) -> dict[str, dict[str, Any]]:
         """Create simple one-view pages for Work, Communications, Misc, and Completed."""
-        root_children = self.client.list_block_children(self.parent_page_id)
-        pages = self._child_pages(root_children)
+        navigation_parent_id, navigation_children = (
+            self._navigation_parent_and_children()
+        )
+        pages = self._child_pages(navigation_children)
         database_id = self._master_task_database()
         if not database_id:
             raise NotionError("master All Tasks database does not exist")
 
-        root_databases = self._child_databases(root_children)
-        if MASTER_TASK_TITLE not in root_databases:
+        navigation_databases = self._child_databases(navigation_children)
+        if MASTER_TASK_TITLE not in navigation_databases:
             self.client.update_database_title(database_id, MASTER_TASK_TITLE)
 
         data_source_id, property_ids = self.client.master_property_ids(database_id)
@@ -2041,7 +2311,7 @@ class NotionSchoolBoard:
             page_created = False
             if not page_id:
                 page = self.client.create_child_page(
-                    page_title, parent_page_id=self.parent_page_id
+                    page_title, parent_page_id=navigation_parent_id
                 )
                 page_id = str(page.get("id") or "")
                 if not page_id:
@@ -2084,6 +2354,104 @@ class NotionSchoolBoard:
                 "url": str(response.get("url") or ""),
             }
         return results
+
+    def ensure_home_dashboard(self) -> dict[str, Any]:
+        """Build the visual home once, then tuck source pages into one container."""
+        root_children = self.client.list_block_children(self.parent_page_id)
+        root_pages = self._child_pages(root_children)
+        navigation_page_id = root_pages.get(NAVIGATION_PAGE_TITLE)
+        navigation_children = (
+            self.client.list_block_children(navigation_page_id)
+            if navigation_page_id
+            else []
+        )
+        all_pages = {
+            **root_pages,
+            **self._child_pages(navigation_children),
+        }
+        all_pages.pop(NAVIGATION_PAGE_TITLE, None)
+        required_pages = {
+            "Today",
+            "Calendar",
+            "School",
+            "Work",
+            "Communications",
+            "Misc",
+            "Completed",
+        }
+        missing_pages = required_pages - set(all_pages)
+        if missing_pages:
+            raise NotionError(
+                "Cannot organize the home page without: "
+                + ", ".join(sorted(missing_pages))
+            )
+
+        database_id = self._master_task_database()
+        if not database_id:
+            raise NotionError("master All Tasks database does not exist")
+
+        urls = {
+            title: f"https://www.notion.so/{page_id.replace('-', '')}"
+            for title, page_id in all_pages.items()
+            if title in required_pages
+        }
+        urls["All Tasks"] = (
+            f"https://www.notion.so/{database_id.replace('-', '')}"
+        )
+        dashboard_exists = any(
+            self._block_plain_text(block) == HOME_DASHBOARD_MARKER
+            for block in root_children
+        )
+        if not dashboard_exists:
+            self.client.append_block_children(
+                self.parent_page_id, home_dashboard_blocks(urls)
+            )
+
+        navigation_created = False
+        if not navigation_page_id:
+            navigation = self.client.create_child_page(
+                NAVIGATION_PAGE_TITLE,
+                parent_page_id=self.parent_page_id,
+                icon="🗂️",
+            )
+            navigation_page_id = str(navigation.get("id") or "")
+            if not navigation_page_id:
+                raise NotionError("Notion did not return the Pages container id")
+            navigation_created = True
+
+        icons = {
+            "Today": "🎯",
+            "Calendar": "🗓️",
+            "School": "🎓",
+            "Work": "💼",
+            "Communications": "💬",
+            "Misc": "🧩",
+            "Completed": "✅",
+        }
+        moved_pages: list[str] = []
+        for title, icon in icons.items():
+            page_id = all_pages[title]
+            self.client.update_page_icon(page_id, icon)
+            if title in root_pages:
+                self.client.move_page(page_id, navigation_page_id)
+                moved_pages.append(title)
+
+        root_databases = self._child_databases(root_children)
+        navigation_databases = self._child_databases(navigation_children)
+        database_was_root = database_id in root_databases.values()
+        if database_was_root or database_id in navigation_databases.values():
+            self.client.update_database_parent_and_icon(
+                database_id, navigation_page_id, "📋"
+            )
+
+        self.client.update_page_icon(self.parent_page_id, "✅")
+        return {
+            "dashboard_created": not dashboard_exists,
+            "navigation_created": navigation_created,
+            "navigation_page_id": navigation_page_id,
+            "moved_pages": tuple(moved_pages),
+            "database_moved": database_was_root,
+        }
 
     def migrate_legacy_school_rows(self) -> LegacySchoolMigrationResult:
         """Preserve legacy class-table history before those databases are archived."""
@@ -2207,14 +2575,7 @@ class NotionSchoolBoard:
         root_databases = self._child_databases(
             self.client.list_block_children(self.parent_page_id)
         )
-        master_database_id = next(
-            (
-                root_databases[title]
-                for title in (MASTER_TASK_TITLE, *LEGACY_MASTER_TASK_TITLES)
-                if title in root_databases
-            ),
-            None,
-        )
+        master_database_id = self._master_task_database()
         if not master_database_id:
             raise NotionError("master Tasks database does not exist")
 
@@ -2292,9 +2653,10 @@ class NotionSchoolBoard:
         database_id = self._master_task_database()
         created_database = False
         if not database_id:
+            navigation_parent_id, _ = self._navigation_parent_and_children()
             database = self.client.create_database(
                 MASTER_TASK_TITLE,
-                parent_page_id=self.parent_page_id,
+                parent_page_id=navigation_parent_id,
                 properties=master_task_schema(),
                 is_inline=False,
             )
