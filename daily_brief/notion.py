@@ -718,17 +718,15 @@ def task_area_page_specs(property_ids: dict[str, str]) -> dict[str, dict[str, An
     }
 
 
-def _navigation_card(
+def _navigation_link(
     title: str,
     description: str,
     url: str,
-    *,
-    color: str = "default",
 ) -> dict[str, Any]:
     return {
         "object": "block",
-        "type": "quote",
-        "quote": {
+        "type": "paragraph",
+        "paragraph": {
             "rich_text": [
                 {
                     "type": "text",
@@ -741,7 +739,7 @@ def _navigation_card(
                     "annotations": {"color": "gray"},
                 },
             ],
-            "color": color,
+            "color": "default",
         },
     }
 
@@ -781,6 +779,56 @@ def home_dashboard_blocks(urls: dict[str, str]) -> list[dict[str, Any]]:
             },
         }
 
+    left = [
+        heading("Today"),
+        _navigation_link(
+            "Open today's focus",
+            "A short, ordered plan with one clear place to start.",
+            urls["Today"],
+        ),
+        {"object": "block", "type": "divider", "divider": {}},
+        heading("Plan"),
+        _navigation_link(
+            "Calendar",
+            "See what is due on any day.",
+            urls["Calendar"],
+        ),
+        _navigation_link(
+            "All tasks",
+            "Update completion, notes, and next steps.",
+            urls["All Tasks"],
+        ),
+    ]
+    right = [
+        heading("Areas"),
+        _navigation_link(
+            "School",
+            "Classes, assignments, and assessments.",
+            urls["School"],
+        ),
+        _navigation_link(
+            "Work",
+            "Projects and personal work.",
+            urls["Work"],
+        ),
+        _navigation_link(
+            "Communications",
+            "People, replies, and follow-ups.",
+            urls["Communications"],
+        ),
+        _navigation_link(
+            "Misc",
+            "Everything that belongs elsewhere.",
+            urls["Misc"],
+        ),
+        {"object": "block", "type": "divider", "divider": {}},
+        _navigation_link(
+            "Completed",
+            "Done, submitted, waiting, and archived tasks.",
+            urls["Completed"],
+        ),
+    ]
+
     return [
         {
             "object": "block",
@@ -795,50 +843,25 @@ def home_dashboard_blocks(urls: dict[str, str]) -> list[dict[str, Any]]:
                 ]
             },
         },
-        _navigation_card(
-            "Today",
-            "The short list: what matters now, and what comes next.",
-            urls["Today"],
-            color="gray_background",
-        ),
-        heading("Plan"),
-        _navigation_card(
-            "Calendar",
-            "See what is due on any day.",
-            urls["Calendar"],
-        ),
-        _navigation_card(
-            "All Tasks",
-            "Search and review everything.",
-            urls["All Tasks"],
-        ),
-        heading("Areas"),
-        _navigation_card(
-            "School",
-            "Classes, assignments, and assessments.",
-            urls["School"],
-        ),
-        _navigation_card(
-            "Work",
-            "Projects and personal work.",
-            urls["Work"],
-        ),
-        _navigation_card(
-            "Communications",
-            "People, replies, and follow-ups.",
-            urls["Communications"],
-        ),
-        _navigation_card(
-            "Misc",
-            "Everything that belongs elsewhere.",
-            urls["Misc"],
-        ),
+        {
+            "object": "block",
+            "type": "column_list",
+            "column_list": {
+                "children": [
+                    {
+                        "object": "block",
+                        "type": "column",
+                        "column": {"width_ratio": 0.58, "children": left},
+                    },
+                    {
+                        "object": "block",
+                        "type": "column",
+                        "column": {"width_ratio": 0.42, "children": right},
+                    },
+                ]
+            },
+        },
         {"object": "block", "type": "divider", "divider": {}},
-        _navigation_card(
-            "Completed",
-            "Done, submitted, waiting, and archived tasks.",
-            urls["Completed"],
-        ),
         {
             "object": "block",
             "type": "paragraph",
@@ -847,7 +870,7 @@ def home_dashboard_blocks(urls: dict[str, str]) -> list[dict[str, Any]]:
                     {
                         "type": "text",
                         "text": {
-                            "content": "TodoTasker keeps these pages synced automatically."
+                            "content": "TodoTasker keeps these pages in sync."
                         },
                         "annotations": {"color": "gray"},
                     }

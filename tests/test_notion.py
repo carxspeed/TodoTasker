@@ -199,7 +199,7 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
     assert property_ids["Course"] not in visible_school_ids
 
 
-def test_home_dashboard_uses_full_width_cards_that_remain_readable_on_phones() -> None:
+def test_home_dashboard_uses_a_compact_two_column_navigation() -> None:
     urls = {
         title: f"https://notion.test/{title.lower().replace(' ', '-')}"
         for title in (
@@ -219,27 +219,27 @@ def test_home_dashboard_uses_full_width_cards_that_remain_readable_on_phones() -
     assert blocks[0]["paragraph"]["rich_text"][0]["text"]["content"] == (
         "Today first. Everything else when you need it."
     )
-    assert blocks[1]["quote"]["color"] == "gray_background"
-    assert not [block for block in blocks if block["type"] == "column_list"]
-    card_titles = [
-        block["quote"]["rich_text"][0]["text"]["content"]
-        for block in blocks
-        if block["type"] == "quote"
+    columns = blocks[1]["column_list"]["children"]
+    assert [column["column"]["width_ratio"] for column in columns] == [0.58, 0.42]
+    links = [
+        block["paragraph"]["rich_text"][0]["text"]
+        for column in columns
+        for block in column["column"]["children"]
+        if block["type"] == "paragraph"
     ]
-    assert card_titles == [
-        "Today",
+    assert [link["content"] for link in links] == [
+        "Open today's focus",
         "Calendar",
-        "All Tasks",
+        "All tasks",
         "School",
         "Work",
         "Communications",
         "Misc",
         "Completed",
     ]
-    completed = blocks[-2]
-    assert completed["quote"]["rich_text"][0]["text"]["link"]["url"] == (
-        urls["Completed"]
-    )
+    assert links[0]["link"]["url"] == urls["Today"]
+    assert links[-1]["link"]["url"] == urls["Completed"]
+    assert not [block for block in blocks if block["type"] == "quote"]
 
 
 def test_school_assignment_payload_includes_source_id_and_safe_next_step() -> None:
@@ -712,7 +712,7 @@ def test_home_dashboard_rebuild_inserts_replacement_before_pages_container() -> 
     result = board.rebuild_home_dashboard()
 
     assert result["blocks_archived"] == 2
-    assert result["blocks_written"] == 13
+    assert result["blocks_written"] == 4
     assert fake.appended_blocks[0][2] == {"after": "old-marker"}
     assert fake.archived_blocks == ["old-marker", "old-card"]
 
