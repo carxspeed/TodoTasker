@@ -126,10 +126,16 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
 
     assert list(specs) == ["Active"]
     active = specs["Active"]
-    assert active["type"] == "list"
+    assert active["type"] == "gallery"
+    assert active["configuration"]["cover"] is None
+    assert active["configuration"]["card_layout"] == "compact"
     columns = active["configuration"]["properties"]
     by_id = {column["property_id"]: column for column in columns}
     assert by_id[property_ids["Next step"]]["visible"] is True
+    assert by_id[property_ids["Next step"]]["wrap"] is True
+    assert by_id[property_ids["Next step"]]["card_property_width_mode"] == (
+        "full_line"
+    )
     assert by_id[property_ids["Instructions"]]["visible"] is False
     assert by_id[property_ids["Focus rank"]]["visible"] is False
     assert by_id[property_ids["Source ID"]]["visible"] is False

@@ -409,25 +409,41 @@ def master_view_specs(
     specs = [
         {
             "name": "Active",
-            "type": "list",
+            "type": "gallery",
             "filter": active_filter(),
             "sorts": active_sorts,
             "quick_filters": {},
             "configuration": {
-                "type": "list",
-                "properties": properties(
-                    [
-                        "Task",
-                        "Open",
-                        "Status",
-                        "Due",
-                        "Course",
-                        "Display type",
-                        "Priority",
-                        "Next step",
-                        "Notes / progress",
-                    ]
-                ),
+                "type": "gallery",
+                "properties": [
+                    {
+                        **item,
+                        **(
+                            {
+                                "wrap": True,
+                                "card_property_width_mode": "full_line",
+                            }
+                            if item["property_id"] == property_ids["Next step"]
+                            else {}
+                        ),
+                    }
+                    for item in properties(
+                        [
+                            "Task",
+                            "Status",
+                            "Due",
+                            "Course",
+                            "Display type",
+                            "Priority",
+                            "Next step",
+                            "Open",
+                        ]
+                    )
+                ],
+                "cover": None,
+                "cover_size": None,
+                "cover_aspect": None,
+                "card_layout": "compact",
             },
             "position": {"type": "start"},
         },
