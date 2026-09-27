@@ -22,6 +22,29 @@ TaskStatus = Literal[
     "Done",
 ]
 
+CanvasSubmissionStatus = Literal[
+    "unsubmitted",
+    "submitted",
+    "graded",
+    "completed",
+    "excused",
+    "unknown",
+]
+
+
+class CanvasSubmissionEvidence(Contract):
+    """Sanitized facts used by Python to decide whether Canvas work is actionable."""
+
+    source: Literal["planner", "todo", "submission", "missing", "unknown"] = "unknown"
+    workflow_state: str = Field(default="", max_length=80)
+    submitted: bool | None = None
+    missing: bool | None = None
+    excused: bool | None = None
+    score: float | None = None
+    points_possible: float | None = None
+    grade: str = Field(default="", max_length=80)
+    submitted_at: AwareDatetime | None = None
+
 
 class CanvasAssignment(Contract):
     key: str
@@ -38,7 +61,8 @@ class CanvasAssignment(Contract):
     description: str = Field(default="", max_length=2000)
     user_notes: str = Field(default="", max_length=1000)
     submission_types: list[str] = Field(default_factory=list)
-    submission_status: Literal["unsubmitted", "unknown"]
+    submission_status: CanvasSubmissionStatus
+    submission_evidence: CanvasSubmissionEvidence | None = None
     needs_confirmation: bool = False
     locked_for_user: bool = False
     unlock_at: AwareDatetime | None = None

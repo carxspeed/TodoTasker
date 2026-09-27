@@ -29,6 +29,8 @@ from .models import (
     CanvasEvent,
     CanvasPlanner,
     CanvasReminder,
+    CanvasSubmissionEvidence,
+    CanvasSubmissionStatus,
     CanvasSourceStatus,
     PlannerEvent,
     PlannerObservation,
@@ -968,24 +970,13 @@ def planner_item_is_complete(item: dict[str, Any]) -> bool:
     submissions = item.get("submissions")
     if not isinstance(submissions, dict):
         return False
-    if submissions.get("submitted") is True:
-        return True
-    if submissions.get("excused") is True:
-        return True
-    if submissions.get("missing") is True:
-        return False
-    if any(
-        submissions.get(name) is True
-        for name in ("graded", "with_feedback", "needs_grading")
-    ):
-        return True
     plannable = item.get("plannable") or item.get("assignment") or item
-    return (
-        submissions.get("submitted") is not False
-        and submission_has_full_credit(
-            submissions, plannable.get("points_possible")
-        )
+    status, _ = classify_canvas_submission(
+        submissions,
+        plannable.get("points_possible"),
+        source="planner",
     )
+    return status in {"submitted", "graded", "completed", "excused"}
 
 
 def _numeric(value: Any) -> float | None:
@@ -1017,24 +1008,57 @@ def submission_has_full_credit(
     )
 
 
+def classify_canvas_submission(
+    submission: dict[str, Any],
+    points_possible: float | None = None,
+    *,
+    source: str = "submission",
+) -> tuple[CanvasSubmissionStatus, CanvasSubmissionEvidence]:
+    """Turn Canvas submission fields into one deterministic, auditable state."""
+
+    workflow = str(submission.get("workflow_state") or "").strip().casefold()
+    submitted_at = _aware_or_none(submission.get("submitted_at"))
+    evidence = CanvasSubmissionEvidence(
+        source=source if source in {"planner", "todo", "submission", "missing"} else "unknown",
+        workflow_state=workflow[:80],
+        submitted=submission.get("submitted") if isinstance(submission.get("submitted"), bool) else None,
+        missing=submission.get("missing") if isinstance(submission.get("missing"), bool) else None,
+        excused=submission.get("excused") if isinstance(submission.get("excused"), bool) else None,
+        score=_numeric(submission.get("score")),
+        points_possible=_numeric(points_possible),
+        grade=str(submission.get("grade") or "")[:80],
+        submitted_at=submitted_at,
+    )
+    if evidence.excused is True:
+        return "excused", evidence
+    if evidence.missing is True:
+        return "unsubmitted", evidence
+    if evidence.submitted is True or submitted_at is not None:
+        return "submitted", evidence
+    if workflow in {"submitted", "pending_review"}:
+        return "submitted", evidence
+    if workflow == "graded" or any(
+        submission.get(name) is True
+        for name in ("graded", "with_feedback", "needs_grading")
+    ):
+        return "graded", evidence
+    if evidence.submitted is False:
+        return "unsubmitted", evidence
+    if workflow in {"unsubmitted", "new"}:
+        return "unsubmitted", evidence
+    if submission_has_full_credit(submission, points_possible):
+        return "completed", evidence
+    return "unknown", evidence
+
+
 def todo_submission_complete(
     submission: dict[str, Any], points_possible: float | None = None
 ) -> bool:
     """Prefer explicit submission state; use full credit only when state is ambiguous."""
-    if submission.get("excused") is True:
-        return True
-    if submission.get("missing") is True:
-        return False
-    if submission.get("submitted") is True or submission.get("submitted_at"):
-        return True
-    if submission.get("submitted") is False:
-        return False
-    workflow = str(submission.get("workflow_state") or "").casefold()
-    if workflow in {"submitted", "pending_review"}:
-        return True
-    if workflow in {"unsubmitted", "new"}:
-        return False
-    return submission_has_full_credit(submission, points_possible)
+    status, _ = classify_canvas_submission(
+        submission, points_possible, source="submission"
+    )
+    return status in {"submitted", "graded", "completed", "excused"}
 
 
 def remove_completed_assignments(
@@ -1058,8 +1082,19 @@ def remove_completed_assignments(
         except CanvasError:
             kept.append(assignment)
             continue
-        if not todo_submission_complete(submission, assignment.points):
-            kept.append(assignment)
+        status, evidence = classify_canvas_submission(
+            submission, assignment.points, source="submission"
+        )
+        if status not in {"submitted", "graded", "completed", "excused"}:
+            kept.append(
+                assignment.model_copy(
+                    update={
+                        "submission_status": status,
+                        "submission_evidence": evidence,
+                        "needs_confirmation": status == "unknown",
+                    }
+                )
+            )
     return kept
 
 
@@ -1075,7 +1110,8 @@ def _aware_or_none(value: Any) -> datetime | None:
 def normalize_task(
     item: dict[str, Any],
     *,
-    submission_status: str = "unsubmitted",
+    submission_status: CanvasSubmissionStatus = "unsubmitted",
+    submission_evidence: CanvasSubmissionEvidence | None = None,
     needs_confirmation: bool = False,
 ) -> CanvasAssignment:
     kind = str(item.get("plannable_type") or "assignment")
@@ -1100,6 +1136,7 @@ def normalize_task(
         description=strip_html(str(plannable.get("description") or ""), 400),
         submission_types=[str(value) for value in plannable.get("submission_types") or []],
         submission_status=submission_status,
+        submission_evidence=submission_evidence,
         needs_confirmation=needs_confirmation,
         locked_for_user=bool(plannable.get("locked_for_user")),
         unlock_at=_aware_or_none(plannable.get("unlock_at")),
@@ -1133,10 +1170,24 @@ def normalize_assignment_sources(
         kind = item.get("plannable_type")
         plannable = item.get("plannable") or {}
         if kind in TASK_TYPES:
-            if planner_item_is_complete(item):
+            submission = item.get("submissions")
+            status: CanvasSubmissionStatus = "unsubmitted"
+            evidence = None
+            if isinstance(submission, dict):
+                status, evidence = classify_canvas_submission(
+                    submission,
+                    plannable.get("points_possible"),
+                    source="planner",
+                )
+            if status in {"submitted", "graded", "completed", "excused"}:
                 continue
             try:
-                normalized = normalize_task(item)
+                normalized = normalize_task(
+                    item,
+                    submission_status=status,
+                    submission_evidence=evidence,
+                    needs_confirmation=status == "unknown",
+                )
                 assignments[normalized.key] = normalized
             except (ValueError, TypeError):
                 warnings.append("Skipped malformed Canvas planner task")
@@ -1170,15 +1221,22 @@ def normalize_assignment_sources(
         raw_assignment = item.get("assignment") or item
         assignment_id = raw_assignment.get("id")
         submission = (todo_submissions or {}).get(int(assignment_id)) if assignment_id else None
-        if isinstance(submission, dict) and todo_submission_complete(
-            submission, raw_assignment.get("points_possible")
-        ):
+        status: CanvasSubmissionStatus = "unknown"
+        evidence = None
+        if isinstance(submission, dict):
+            status, evidence = classify_canvas_submission(
+                submission,
+                raw_assignment.get("points_possible"),
+                source="todo",
+            )
+        if status in {"submitted", "graded", "completed", "excused"}:
             continue
-        unknown = not isinstance(submission, dict)
+        unknown = status == "unknown"
         try:
             normalized = normalize_task(
                 item,
-                submission_status="unknown" if unknown else "unsubmitted",
+                submission_status=status,
+                submission_evidence=evidence,
                 needs_confirmation=unknown,
             )
             assignments[normalized.key] = normalized
@@ -1202,6 +1260,11 @@ def normalize_assignment_sources(
             normalized = normalize_task(
                 wrapped,
                 submission_status="unsubmitted" if verified else "unknown",
+                submission_evidence=CanvasSubmissionEvidence(
+                    source="missing",
+                    missing=True,
+                    points_possible=_numeric(raw.get("points_possible")),
+                ),
                 needs_confirmation=not verified,
             )
             existing = assignments.get(normalized.key)

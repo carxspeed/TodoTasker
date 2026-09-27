@@ -9,6 +9,7 @@ from daily_brief.canvas import (
     CanvasError,
     assignment_collection_window,
     canvas_storage_state_path,
+    classify_canvas_submission,
     ensure_canvas_session,
     enrich_assignment_details,
     exclude_course_assignments,
@@ -928,6 +929,24 @@ def test_submission_filters_do_not_use_course_wide_flag() -> None:
     assert todo_submission_complete({"submitted": False, "score": 10}, 10) is False
 
 
+@pytest.mark.parametrize(
+    ("submission", "points", "expected"),
+    [
+        ({"submitted": True}, 10, "submitted"),
+        ({"workflow_state": "graded", "missing": False}, 10, "graded"),
+        ({"score": 10}, 10, "completed"),
+        ({"workflow_state": "graded", "missing": True, "score": 0}, 10, "unsubmitted"),
+        ({}, 10, "unknown"),
+    ],
+)
+def test_submission_truth_is_explicit_and_auditable(submission, points, expected) -> None:
+    status, evidence = classify_canvas_submission(submission, points)
+
+    assert status == expected
+    assert evidence.points_possible == points
+    assert evidence.missing is submission.get("missing")
+
+
 def test_submission_recheck_removes_full_credit_but_keeps_unsubmitted_zero() -> None:
     base = load_fixture("fixtures/sample_todo.json").assignments[0]
     full_credit = base.model_copy(
@@ -951,6 +970,10 @@ def test_submission_recheck_removes_full_credit_but_keeps_unsubmitted_zero() -> 
     )
 
     assert [item.key for item in kept] == [zero.key]
+    assert kept[0].submission_status == "unsubmitted"
+    assert kept[0].submission_evidence is not None
+    assert kept[0].submission_evidence.missing is True
+    assert kept[0].submission_evidence.score == 0
 
 
 def test_missing_union_keeps_unknown_locked_item_in_verify_path() -> None:
