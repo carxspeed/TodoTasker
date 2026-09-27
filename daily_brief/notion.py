@@ -623,11 +623,76 @@ def master_view_specs(
             },
         },
     ]
+    for view_name, area_name in (
+        ("Work", "Work"),
+        ("Communications", "Connections"),
+        ("Misc", "Misc"),
+    ):
+        specs.append(
+            {
+                "name": view_name,
+                "type": "list",
+                "filter": active_filter(
+                    _view_filter(
+                        property_ids["Area"], "select", "equals", area_name
+                    )
+                ),
+                "sorts": active_sorts,
+                "quick_filters": {},
+                "configuration": {
+                    "type": "list",
+                    "properties": properties(
+                        compact + ["Area", "Notes / progress"]
+                    ),
+                },
+            }
+        )
+    specs.append(
+        {
+            "name": "Archive",
+            "type": "list",
+            "filter": {
+                "or": [
+                    _view_filter(
+                        property_ids["Archived"], "checkbox", "equals", True
+                    ),
+                    *(
+                        _view_filter(
+                            property_ids["Status"], "select", "equals", status
+                        )
+                        for status in ("Done", "Submitted", "Waiting")
+                    ),
+                ]
+            },
+            "sorts": [
+                {"property": property_ids["Due"], "direction": "descending"}
+            ],
+            "quick_filters": {},
+            "configuration": {
+                "type": "list",
+                "properties": properties(
+                    [
+                        "Task",
+                        "Open",
+                        "Status",
+                        "Area",
+                        "Course",
+                        "Due",
+                        "Notes / progress",
+                    ]
+                ),
+            },
+        }
+    )
     primary_names = {
         "Today",
         "Upcoming",
         "Active tasks",
         "Needs attention",
+        "Work",
+        "Communications",
+        "Misc",
+        "Archive",
     }
     if primary_only:
         specs = [spec for spec in specs if spec["name"] in primary_names]
@@ -641,6 +706,10 @@ def master_view_specs(
                 "Upcoming",
                 "Active tasks",
                 "Needs attention",
+                "Work",
+                "Communications",
+                "Misc",
+                "Archive",
             )
         )
     }
@@ -1177,7 +1246,7 @@ class NotionClient:
         )
 
     def ensure_master_task_views(self, database_id: str) -> dict[str, str]:
-        """Create or update the four user-facing task views."""
+        """Create or update the small, intentional set of user-facing task views."""
         data_source_id, property_ids = self.master_property_ids(database_id)
         specs = master_view_specs(property_ids)
         existing = self.list_database_views(database_id)
@@ -1204,41 +1273,12 @@ class NotionClient:
         return urls
 
     def rebuild_master_task_views(self, database_id: str) -> dict[str, str]:
-        """Replace cluttered master tabs with four canonical views; rows stay intact."""
+        """Replace cluttered tabs with the canonical views; task rows stay intact."""
         data_source_id, property_ids = self.master_property_ids(database_id)
         specs = master_view_specs(property_ids)
-        active_spec = next(spec for spec in specs if spec["name"] == "Active tasks")
         existing = self.list_database_views(database_id)
-
-        keeper = next(
-            (
-                view
-                for view in existing
-                if view.get("name") in {"Active tasks", "All Tasks", "_System"}
-                and view.get("type") == "table"
-            ),
-            None,
-        )
-        if keeper is None:
-            keeper = next(
-                (view for view in existing if view.get("type") == "table"), None
-            )
-        if keeper is None:
-            keeper = self.create_view(database_id, data_source_id, active_spec)
-        else:
-            keeper = self.update_view(str(keeper["id"]), active_spec)
-        keeper_id = str(keeper["id"])
-
-        for view in existing:
-            view_id = str(view.get("id") or "")
-            if view_id and view_id != keeper_id:
-                self.delete_view(view_id)
-
         urls: dict[str, str] = {}
-        active_url = str(keeper.get("url") or "")
-        if active_url:
-            urls["Active tasks"] = active_url
-        for spec in reversed([item for item in specs if item["name"] != "Active tasks"]):
+        for spec in reversed(specs):
             response = self.create_view(
                 database_id,
                 data_source_id,
@@ -1247,6 +1287,10 @@ class NotionClient:
             url = str(response.get("url") or "")
             if url:
                 urls[spec["name"]] = url
+        for view in existing:
+            view_id = str(view.get("id") or "")
+            if view_id:
+                self.delete_view(view_id)
         return urls
 
     def get_active_work(self) -> WorkSnapshot:

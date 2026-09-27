@@ -127,6 +127,10 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
         "Upcoming",
         "Active tasks",
         "Needs attention",
+        "Work",
+        "Communications",
+        "Misc",
+        "Archive",
     ]
     active = specs["Active tasks"]
     columns = active["configuration"]["properties"]
@@ -141,6 +145,20 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
         "property": property_ids["Due"],
         "direction": "ascending",
     }
+    communications = specs["Communications"]
+    assert communications["filter"]["and"][-1] == {
+        "property": property_ids["Area"],
+        "select": {"equals": "Connections"},
+    }
+    archive = specs["Archive"]
+    assert archive["filter"]["or"][-3:] == [
+        {"property": property_ids["Status"], "select": {"equals": "Done"}},
+        {
+            "property": property_ids["Status"],
+            "select": {"equals": "Submitted"},
+        },
+        {"property": property_ids["Status"], "select": {"equals": "Waiting"}},
+    ]
     school = school_linked_view_spec(property_ids)
     assert school["filter"]["and"][-1] == {
         "property": property_ids["Area"],
@@ -1217,7 +1235,7 @@ def test_linked_database_title_uses_current_api() -> None:
     assert http.calls[0][2]["headers"]["Notion-Version"] == "2026-03-11"
 
 
-def test_rebuild_master_views_keeps_rows_and_replaces_clutter_with_four_tabs() -> None:
+def test_rebuild_master_views_keeps_rows_and_replaces_clutter_with_canonical_tabs() -> None:
     client = NotionClient("token", "")
     property_ids = {
         name: f"id-{index}" for index, name in enumerate(master_task_schema(), start=1)
@@ -1250,10 +1268,15 @@ def test_rebuild_master_views_keeps_rows_and_replaces_clutter_with_four_tabs() -
 
     urls = client.rebuild_master_task_views("master")
 
-    assert updated == [("old-system", "Active tasks")]
-    assert deleted == ["old-school", "old-work"]
+    assert updated == []
+    assert deleted == ["old-system", "old-school", "old-work"]
     assert [item[2] for item in created] == [
+        "Archive",
+        "Misc",
+        "Communications",
+        "Work",
         "Needs attention",
+        "Active tasks",
         "Upcoming",
         "Today",
     ]
@@ -1263,6 +1286,10 @@ def test_rebuild_master_views_keeps_rows_and_replaces_clutter_with_four_tabs() -
         "Upcoming",
         "Active tasks",
         "Needs attention",
+        "Work",
+        "Communications",
+        "Misc",
+        "Archive",
     }
 
 
