@@ -1373,3 +1373,52 @@ def test_task_store_routes_new_items_and_updates_existing_pages() -> None:
     assert clients["Work"].updated == [("page", {"Status": "Done"})]
     with pytest.raises(ValueError, match="unknown task database"):
         store.create_work_item({"Name": "Other", "Area": "Unknown"})
+
+
+class MasterMutationClient:
+    def __init__(self):
+        self.created = []
+        self.updated = []
+
+    def create_master_task(self, database_id, fields):
+        self.created.append((database_id, fields))
+        return {"id": "created"}
+
+    def update_master_task(self, page_id, fields):
+        self.updated.append((page_id, fields))
+        return {"id": page_id}
+
+
+def test_master_board_translates_checkin_creates_and_updates() -> None:
+    client = MasterMutationClient()
+    board = NotionSchoolBoard("", "parent", "school", client=client)
+    board._master_task_database = lambda: "tasks"
+
+    board.create_work_item(
+        {
+            "Name": "Call advisor",
+            "Area": "Connections",
+            "Type": "Task",
+            "Cadence": "None",
+            "Last touched": "2026-09-26",
+            "Status": "Active",
+            "Deadline": "2026-09-30",
+        }
+    )
+    created = client.created[0]
+    assert created[0] == "tasks"
+    assert created[1]["Task"] == "Call advisor"
+    assert created[1]["Area"] == "Connections"
+    assert created[1]["Status"] == "To do"
+    assert created[1]["Source type"] == "Notion"
+    assert created[1]["Source ID"].startswith("notion:checkin:")
+
+    board.update_work_item(
+        "page", {"Status": "Done", "Last touched": "2026-09-26"}
+    )
+    assert client.updated == [
+        (
+            "page",
+            {"Status": "Done", "Done": True, "Last touched": "2026-09-26"},
+        )
+    ]

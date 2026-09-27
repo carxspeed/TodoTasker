@@ -36,10 +36,8 @@ def main() -> int:
                 "TELEGRAM_BOT_TOKEN",
                 "TELEGRAM_CHAT_ID",
                 "NOTION_TOKEN",
-                "NOTION_WORK_DB_ID",
-                "NOTION_SCHOOL_DB_ID",
-                "NOTION_CONNECTIONS_DB_ID",
-                "NOTION_MISC_DB_ID",
+                "NOTION_PARENT_PAGE_ID",
+                "NOTION_SCHOOL_PAGE_ID",
             )
         )
         now = datetime.now(ZoneInfo(settings.timezone))

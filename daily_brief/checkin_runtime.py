@@ -15,7 +15,7 @@ from .checkin import (
 )
 from .config import Settings
 from .models import DailyBriefState, FailedCheckinBatch
-from .notion import NotionTaskStore
+from .notion import NotionSchoolBoard, NotionTaskStore
 from .runtime import normalized_hash
 from .state import StateStore
 from .telegram import TelegramClient
@@ -41,11 +41,23 @@ class CheckinRunner:
         self.telegram = telegram or TelegramClient(
             settings.telegram_bot_token, settings.telegram_chat_id
         )
-        self.notion = notion or NotionTaskStore(
-            settings.notion_token,
-            settings.notion_database_ids,
-            settings.notion_parent_page_id,
-        )
+        if notion is not None:
+            self.notion = notion
+        else:
+            master = NotionSchoolBoard(
+                settings.notion_token,
+                settings.notion_parent_page_id,
+                settings.notion_school_page_id,
+            )
+            self.notion = (
+                master
+                if master.master_tasks_enabled()
+                else NotionTaskStore(
+                    settings.notion_token,
+                    settings.notion_database_ids,
+                    settings.notion_parent_page_id,
+                )
+            )
         self.ollama_session = ollama_session
 
     def cleanup_quarantine(self, now: datetime) -> None:

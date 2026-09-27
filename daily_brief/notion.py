@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Iterable
 from urllib.parse import unquote
+from uuid import uuid4
 
 from .http import HttpClient, HttpFailure
 from .models import DailyNotification, NotionWorkItem, NotificationTask
@@ -1835,6 +1836,70 @@ class NotionSchoolBoard:
     def master_tasks_enabled(self) -> bool:
         """Return whether the safe migration has created the master database."""
         return self._master_task_database() is not None
+
+    def get_active_work(self) -> WorkSnapshot:
+        """Expose the master database through the evening check-in interface."""
+
+        return self.get_master_work()
+
+    def create_work_item(self, fields: dict[str, Any]) -> dict[str, Any]:
+        """Create a check-in task in the master database, not an archived table."""
+
+        database_id = self._master_task_database()
+        if not database_id:
+            raise NotionError("master Tasks database does not exist")
+        name = _bounded(str(fields.get("Name") or ""), 200)
+        if not name:
+            raise ValueError("new Notion task requires a Name")
+        area = str(fields.get("Area") or "Misc")
+        if area not in MASTER_AREAS:
+            raise ValueError(f"unknown task area: {area}")
+        old_status = str(fields.get("Status") or "Active")
+        status = "Done" if old_status == "Done" else "To do"
+        item = NotionWorkItem(
+            key=f"notion:checkin:{uuid4().hex}",
+            page_id="pending",
+            url="",
+            name=name,
+            area=area,
+            type=str(fields.get("Type") or "Task"),
+            cadence=str(fields.get("Cadence") or "None"),
+            last_touched=fields.get("Last touched"),
+            next_step=_bounded(str(fields.get("Next step") or ""), 1000),
+            deadline=fields.get("Deadline"),
+            effort=fields.get("Effort"),
+            status=status,
+        )
+        master_fields = notion_master_task_fields(item)
+        master_fields.update(
+            {
+                "Done": status == "Done",
+                "Notes / progress": "",
+            }
+        )
+        return self.client.create_master_task(database_id, master_fields)
+
+    def update_work_item(self, page_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+        """Translate legacy check-in field names into master task properties."""
+
+        mapped: dict[str, Any] = {}
+        for name, value in fields.items():
+            if name == "Status":
+                mapped["Status"] = "Done" if value == "Done" else "To do"
+                mapped["Done"] = value == "Done"
+            elif name == "Name":
+                mapped["Task"] = value
+            elif name == "Deadline":
+                mapped["Due"] = value
+            elif name in {"Last touched", "Next step", "Effort", "Cadence"}:
+                mapped[name] = value
+            elif name == "Type":
+                mapped["Task type"] = value
+            elif name == "Area":
+                mapped["Area"] = value
+            else:
+                raise ValueError(f"unsupported check-in task property: {name}")
+        return self.client.update_master_task(page_id, mapped)
 
     def create_school_task_view(self) -> dict[str, Any]:
         """Create one linked master view on School, grouped by course."""
