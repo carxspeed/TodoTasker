@@ -39,6 +39,16 @@ def test_stale_dead_lock_is_recovered(tmp_path: Path) -> None:
         lock.release()
 
 
+def test_incomplete_new_lock_is_not_stolen(tmp_path: Path) -> None:
+    path = tmp_path / "run.lock"
+    path.write_text("", encoding="utf-8")
+
+    with pytest.raises(DeferredHealthyLock, match="owner_pid=starting"):
+        HeartbeatLock(path, max_wait=0, pid_alive=lambda _: False).acquire()
+
+    assert path.exists()
+
+
 def test_target_specific_cache_rejects_yesterday(tmp_path: Path) -> None:
     cache = SourceCache(tmp_path)
     snapshot = CalendarSnapshot(

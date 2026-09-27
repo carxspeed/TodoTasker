@@ -90,7 +90,8 @@ console window appears. Per-command output is written under `state\scheduled-log
 Every task is interactive-user only, starts as soon as possible after a missed trigger,
 wakes the computer, is allowed to start and continue on battery power, and retries a
 nonzero exit three times at ten-minute intervals. The commands enforce their own
-catch-up windows before locking, so a morning wake cannot send an old evening prompt.
+catch-up windows before locking. A missed morning brief remains useful until 8:30 PM;
+after that it is suppressed rather than arriving during the evening workflow.
 Exit code 75 means a healthy owner still holds the shared lock and is retryable;
 `skipped_stale` exits zero.
 

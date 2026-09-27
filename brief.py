@@ -16,10 +16,23 @@ from daily_brief.runtime import DeferredHealthyLock, HeartbeatLock
 from daily_brief.telegram import TelegramClient, render_notification_preview
 
 
+DELIVERY_CATCHUP_END = time(20, 30)
+
+
 def _in_window(now_time: time, start: time, end: time) -> bool:
     if start <= end:
         return start <= now_time <= end
     return now_time >= start or now_time <= end
+
+
+def _delivery_exit_code(status: str) -> int:
+    """Let Task Scheduler retry deliveries that did not reach Telegram."""
+
+    if status in {"sent", "edited", "skipped"}:
+        return 0
+    if status == "uncertain":
+        return DeferredHealthyLock.exit_code
+    return 1
 
 
 def _canvas_is_authoritative(canvas) -> bool:
@@ -128,7 +141,9 @@ def main() -> int:
             target = explicit or (now.date() + timedelta(days=1) if now.time() >= time(21, 40) else now.date())
             as_of = datetime.combine(target, time(6, 30), timezone)
         elif args.command == "deliver":
-            if not explicit and not _in_window(now.time(), time(5, 30), time(12, 0)):
+            if not explicit and not _in_window(
+                now.time(), time(5, 30), DELIVERY_CATCHUP_END
+            ):
                 print("skipped_stale")
                 return 0
             target = explicit or now.date()
@@ -195,6 +210,7 @@ def main() -> int:
                 )
                 print(text)
                 print(f"delivery={status}")
+                return _delivery_exit_code(status)
             elif args.command == "preview-notification":
                 provider = LiveSourceProvider(
                     settings, fixture=args.fixture, profile=args.profile

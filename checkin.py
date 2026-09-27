@@ -12,8 +12,15 @@ from daily_brief.config import ConfigurationError, load_settings
 from daily_brief.runtime import DeferredHealthyLock, HeartbeatLock
 
 
+RETRYABLE_RESULTS = {"SEND_FAILED", "EXTRACTION_FAILED", "PRIOR_CHECKIN_FAILED"}
+
+
 def _in_window(value: time, start: time, end: time) -> bool:
     return value >= start or value <= end if start > end else start <= value <= end
+
+
+def _result_exit_code(result: str) -> int:
+    return 1 if result in RETRYABLE_RESULTS else 0
 
 
 def main() -> int:
@@ -46,8 +53,9 @@ def main() -> int:
             return 0
         with HeartbeatLock():
             runner = CheckinRunner(settings)
-            print(runner.send(now=now) if args.command == "send" else runner.process(now=now))
-        return 0
+            result = runner.send(now=now) if args.command == "send" else runner.process(now=now)
+            print(result)
+        return _result_exit_code(result)
     except DeferredHealthyLock as exc:
         print(exc)
         return exc.exit_code

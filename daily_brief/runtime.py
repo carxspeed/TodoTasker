@@ -74,6 +74,15 @@ class HeartbeatLock:
         except (KeyError, TypeError, ValueError):
             return False
 
+    def _incomplete_lock_is_recent(self) -> bool:
+        """Protect a lock that another process has created but not finished writing."""
+
+        try:
+            age = time.time() - self.path.stat().st_mtime
+        except (FileNotFoundError, OSError):
+            return False
+        return age < min(5.0, self.stale_after.total_seconds())
+
     def acquire(self) -> "HeartbeatLock":
         self.path.parent.mkdir(parents=True, exist_ok=True)
         deadline = time.monotonic() + self.max_wait
@@ -89,11 +98,28 @@ class HeartbeatLock:
                 return self
             except FileExistsError:
                 owner = self._read()
+                if not owner and self._incomplete_lock_is_recent():
+                    if time.monotonic() >= deadline:
+                        raise DeferredHealthyLock(
+                            "DEFERRED_HEALTHY_LOCK owner_pid=starting"
+                        )
+                    time.sleep(self.poll_interval)
+                    continue
                 if not self._healthy(owner):
                     try:
                         self.path.unlink()
                     except FileNotFoundError:
-                        pass
+                        continue
+                    except PermissionError:
+                        # On Windows a different process can still have the new lock
+                        # open while it writes its owner record. Treat that process as
+                        # healthy instead of crashing or stealing its lock.
+                        if time.monotonic() >= deadline:
+                            raise DeferredHealthyLock(
+                                "DEFERRED_HEALTHY_LOCK owner_pid=starting"
+                            )
+                        time.sleep(self.poll_interval)
+                        continue
                     continue
                 if time.monotonic() >= deadline:
                     raise DeferredHealthyLock(
