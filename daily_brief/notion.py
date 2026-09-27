@@ -29,7 +29,8 @@ SCHOOL_KINDS = ["assignment", "quiz", "discussion_topic", "sub_assignment"]
 DAILY_PLAN_TITLE = "Today's Focus"
 FOCUS_DASHBOARD_TITLE = "Today"
 DAILY_PLAN_STATUSES = ["To do", "Done"]
-MASTER_TASK_TITLE = "Tasks"
+MASTER_TASK_TITLE = "All Tasks"
+LEGACY_MASTER_TASK_TITLES = ("Tasks",)
 MASTER_AREAS = ["Work", "School", "Connections", "Misc"]
 MASTER_SOURCE_TYPES = ["Canvas", "Notion"]
 MASTER_STATUSES = [
@@ -401,7 +402,7 @@ def master_view_specs(
     ]
     specs = [
         {
-            "name": "Active tasks",
+            "name": "All tasks",
             "type": "table",
             "filter": active_filter(),
             "sorts": active_sorts,
@@ -684,36 +685,30 @@ def master_view_specs(
             },
         }
     )
-    primary_names = {
-        "Today",
-        "Upcoming",
-        "Active tasks",
-        "Needs attention",
-        "Work",
-        "Communications",
-        "Misc",
-        "Archive",
-    }
+    primary_names = {"All tasks"}
     if primary_only:
         specs = [spec for spec in specs if spec["name"] in primary_names]
     else:
         return specs
-    order = {
-        name: index
-        for index, name in enumerate(
-            (
-                "Today",
-                "Upcoming",
-                "Active tasks",
-                "Needs attention",
-                "Work",
-                "Communications",
-                "Misc",
-                "Archive",
-            )
-        )
+    return specs
+
+
+def task_area_page_specs(property_ids: dict[str, str]) -> dict[str, dict[str, Any]]:
+    """Return one focused linked view for each non-School task destination."""
+    available = {
+        spec["name"]: spec
+        for spec in master_view_specs(property_ids, primary_only=False)
     }
-    return sorted(specs, key=lambda spec: order[spec["name"]])
+    page_sources = {
+        "Work": "Work",
+        "Communications": "Communications",
+        "Misc": "Misc",
+        "Completed": "Archive",
+    }
+    return {
+        page_title: {**available[source_name], "name": "Tasks"}
+        for page_title, source_name in page_sources.items()
+    }
 
 
 def school_linked_view_spec(property_ids: dict[str, str]) -> dict[str, Any]:
@@ -1251,8 +1246,11 @@ class NotionClient:
         specs = master_view_specs(property_ids)
         existing = self.list_database_views(database_id)
         by_name = {str(view.get("name") or ""): view for view in existing}
-        if "Active tasks" not in by_name and "All Tasks" in by_name:
-            by_name["Active tasks"] = by_name.pop("All Tasks")
+        if "All tasks" not in by_name:
+            for legacy_name in ("All Tasks", "Active tasks"):
+                if legacy_name in by_name:
+                    by_name["All tasks"] = by_name.pop(legacy_name)
+                    break
 
         urls: dict[str, str] = {}
         for spec in specs:
@@ -1704,7 +1702,10 @@ class NotionSchoolBoard:
         databases = self._child_databases(
             self.client.list_block_children(self.parent_page_id)
         )
-        return databases.get(MASTER_TASK_TITLE)
+        for title in (MASTER_TASK_TITLE, *LEGACY_MASTER_TASK_TITLES):
+            if title in databases:
+                return databases[title]
+        return None
 
     @staticmethod
     def _child_pages(children: Iterable[dict[str, Any]]) -> dict[str, str]:
@@ -2021,6 +2022,69 @@ class NotionSchoolBoard:
             "url": str(response.get("url") or ""),
         }
 
+    def ensure_task_area_pages(self) -> dict[str, dict[str, Any]]:
+        """Create simple one-view pages for Work, Communications, Misc, and Completed."""
+        root_children = self.client.list_block_children(self.parent_page_id)
+        pages = self._child_pages(root_children)
+        database_id = self._master_task_database()
+        if not database_id:
+            raise NotionError("master All Tasks database does not exist")
+
+        root_databases = self._child_databases(root_children)
+        if MASTER_TASK_TITLE not in root_databases:
+            self.client.update_database_title(database_id, MASTER_TASK_TITLE)
+
+        data_source_id, property_ids = self.client.master_property_ids(database_id)
+        results: dict[str, dict[str, Any]] = {}
+        for page_title, spec in task_area_page_specs(property_ids).items():
+            page_id = pages.get(page_title)
+            page_created = False
+            if not page_id:
+                page = self.client.create_child_page(
+                    page_title, parent_page_id=self.parent_page_id
+                )
+                page_id = str(page.get("id") or "")
+                if not page_id:
+                    raise NotionError(
+                        f"Notion did not return the new {page_title} page id"
+                    )
+                pages[page_title] = page_id
+                page_created = True
+
+            existing = self._child_databases(
+                self.client.list_block_children(page_id)
+            )
+            if existing:
+                results[page_title] = {
+                    "page_id": page_id,
+                    "page_created": page_created,
+                    "view_created": False,
+                    "view_id": "",
+                    "url": "",
+                }
+                continue
+
+            response = self.client.create_linked_view(
+                page_id,
+                data_source_id,
+                spec,
+            )
+            linked_database_id = str(
+                (response.get("parent") or {}).get("database_id") or ""
+            )
+            if linked_database_id:
+                self.client.update_database_title(
+                    linked_database_id, f"{page_title} tasks"
+                )
+            results[page_title] = {
+                "page_id": page_id,
+                "page_created": page_created,
+                "view_created": True,
+                "view_id": str(response.get("id") or ""),
+                "url": str(response.get("url") or ""),
+            }
+        return results
+
     def migrate_legacy_school_rows(self) -> LegacySchoolMigrationResult:
         """Preserve legacy class-table history before those databases are archived."""
         database_id = self._master_task_database()
@@ -2143,7 +2207,14 @@ class NotionSchoolBoard:
         root_databases = self._child_databases(
             self.client.list_block_children(self.parent_page_id)
         )
-        master_database_id = root_databases.get(MASTER_TASK_TITLE)
+        master_database_id = next(
+            (
+                root_databases[title]
+                for title in (MASTER_TASK_TITLE, *LEGACY_MASTER_TASK_TITLES)
+                if title in root_databases
+            ),
+            None,
+        )
         if not master_database_id:
             raise NotionError("master Tasks database does not exist")
 

@@ -20,6 +20,7 @@ from daily_brief.notion import (
     master_task_properties,
     master_task_schema,
     master_view_specs,
+    task_area_page_specs,
     school_linked_view_spec,
     notion_master_task_fields,
     school_assignment_fields,
@@ -122,35 +123,31 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
     }
     specs = {spec["name"]: spec for spec in master_view_specs(property_ids)}
 
-    assert list(specs) == [
-        "Today",
-        "Upcoming",
-        "Active tasks",
-        "Needs attention",
-        "Work",
-        "Communications",
-        "Misc",
-        "Archive",
-    ]
-    active = specs["Active tasks"]
+    assert list(specs) == ["All tasks"]
+    active = specs["All tasks"]
     columns = active["configuration"]["properties"]
     by_id = {column["property_id"]: column for column in columns}
     assert by_id[property_ids["Next step"]]["width"] == 420
     assert by_id[property_ids["Instructions"]]["width"] == 420
     assert by_id[property_ids["Focus rank"]]["visible"] is False
     assert by_id[property_ids["Source ID"]]["visible"] is False
-    upcoming = specs["Upcoming"]
+    all_specs = {
+        spec["name"]: spec
+        for spec in master_view_specs(property_ids, primary_only=False)
+    }
+    upcoming = all_specs["Upcoming"]
     assert upcoming["type"] == "list"
     assert upcoming["sorts"][0] == {
         "property": property_ids["Due"],
         "direction": "ascending",
     }
-    communications = specs["Communications"]
+    page_specs = task_area_page_specs(property_ids)
+    communications = page_specs["Communications"]
     assert communications["filter"]["and"][-1] == {
         "property": property_ids["Area"],
         "select": {"equals": "Connections"},
     }
-    archive = specs["Archive"]
+    archive = page_specs["Completed"]
     assert archive["filter"]["or"][-3:] == [
         {"property": property_ids["Status"], "select": {"equals": "Done"}},
         {
@@ -484,6 +481,53 @@ def test_calendar_page_gets_one_master_backed_due_view() -> None:
     assert fake.updated_database_titles == [("linked-db", "Calendar tasks")]
 
 
+def test_task_areas_get_separate_one_view_pages_backed_by_master_data() -> None:
+    fake = FakeSchoolClient()
+    fake.children_by_page = {
+        "parent": [
+            {
+                "id": "master-db",
+                "type": "child_database",
+                "child_database": {"title": "Tasks"},
+            }
+        ],
+        "today-page": [],
+    }
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    result = board.ensure_task_area_pages()
+
+    assert list(result) == ["Work", "Communications", "Misc", "Completed"]
+    assert [title for title, _ in fake.created_pages] == [
+        "Work",
+        "Communications",
+        "Misc",
+        "Completed",
+    ]
+    assert len(fake.linked_views) == 4
+    by_page = {
+        page_title: fake.linked_views[index][2]
+        for index, page_title in enumerate(result)
+    }
+    assert by_page["Work"]["filter"]["and"][-1] == {
+        "property": by_page["Work"]["filter"]["and"][-1]["property"],
+        "select": {"equals": "Work"},
+    }
+    assert by_page["Communications"]["filter"]["and"][-1]["select"] == {
+        "equals": "Connections"
+    }
+    assert by_page["Completed"]["filter"]["or"][-1]["select"] == {
+        "equals": "Waiting"
+    }
+    assert fake.updated_database_titles == [
+        ("master-db", "All Tasks"),
+        ("linked-db", "Work tasks"),
+        ("linked-db", "Communications tasks"),
+        ("linked-db", "Misc tasks"),
+        ("linked-db", "Completed tasks"),
+    ]
+
+
 def test_legacy_layout_archive_is_narrow_and_requires_preserved_rows() -> None:
     fake = FakeSchoolClient()
     fake.children_by_page = {
@@ -619,7 +663,7 @@ def test_master_sync_creates_one_database_and_preserves_user_fields_on_updates()
 
     assert result.database_created is True
     assert result.rows_created == 2
-    assert fake.created_databases[0][0] == "Tasks"
+    assert fake.created_databases[0][0] == "All Tasks"
     created_fields = [fields for _, fields in fake.created_rows]
     assert {fields["Source ID"] for fields in created_fields} == {
         assignment.key,
@@ -1270,27 +1314,9 @@ def test_rebuild_master_views_keeps_rows_and_replaces_clutter_with_canonical_tab
 
     assert updated == []
     assert deleted == ["old-system", "old-school", "old-work"]
-    assert [item[2] for item in created] == [
-        "Archive",
-        "Misc",
-        "Communications",
-        "Work",
-        "Needs attention",
-        "Active tasks",
-        "Upcoming",
-        "Today",
-    ]
+    assert [item[2] for item in created] == ["All tasks"]
     assert all(item[3] == {"type": "start"} for item in created)
-    assert set(urls) == {
-        "Today",
-        "Upcoming",
-        "Active tasks",
-        "Needs attention",
-        "Work",
-        "Communications",
-        "Misc",
-        "Archive",
-    }
+    assert set(urls) == {"All tasks"}
 
 
 def test_query_paginates_and_normalizes_by_page_id() -> None:

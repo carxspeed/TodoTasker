@@ -960,7 +960,7 @@ class DailyBriefOrchestrator:
                     plan_result = self.notion_delivery.sync_focus_dashboard(
                         notification,
                         full_tasks_url=(
-                            master_result.view_urls.get("Active tasks")
+                            master_result.view_urls.get("All tasks")
                             or "https://www.notion.so/"
                             + master_result.database_id.replace("-", "")
                         ),
