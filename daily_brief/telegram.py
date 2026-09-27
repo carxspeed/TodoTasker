@@ -60,20 +60,20 @@ def render_notification(notification: DailyNotification) -> TelegramSummary:
     """Render one small HTML card instead of copying the full daily report."""
 
     day = notification.target_date.strftime("%A")
-    lines = [f"☀️ <b>{html.escape(day)}'s plan</b>"]
+    lines = [f"<b>{html.escape(day)}</b>", "Your short list for today"]
     primary = notification.primary
     if primary is None:
-        lines.extend(["", "✅ No focus tasks selected."])
+        lines.extend(["", "No focus tasks selected."])
     else:
         title = _short(primary.name, 90)
         if primary.locked_for_user:
-            title = f"🔒 {title}"
+            title = f"[Locked] {title}"
         if primary.course:
             title = f"{_short(primary.course, 35)} · {title}"
         lines.extend(
             [
                 "",
-                "🎯 <b>Start here</b>",
+                "<b>First</b>",
                 f"<b>{html.escape(title)}</b>",
                 html.escape(_short(primary.next_step, 160)),
             ]
@@ -86,7 +86,7 @@ def render_notification(notification: DailyNotification) -> TelegramSummary:
         for index, task in enumerate(notification.followups, start=2):
             title = _short(task.name, 75)
             if task.locked_for_user:
-                title = f"🔒 {title}"
+                title = f"[Locked] {title}"
             if task.course:
                 title = f"{_short(task.course, 28)} · {title}"
             rendered_title = html.escape(title)
@@ -104,7 +104,7 @@ def render_notification(notification: DailyNotification) -> TelegramSummary:
             title = reminder.title
             if reminder.course:
                 title = f"{reminder.course} · {title}"
-            lines.append(f"📝 <b>Reminder:</b> {html.escape(_short(title, 100))}")
+            lines.append(f"<b>Reminder</b>\n{html.escape(_short(title, 100))}")
     footer: list[str] = []
     if notification.backlog_count:
         footer.append(
@@ -113,13 +113,13 @@ def render_notification(notification: DailyNotification) -> TelegramSummary:
         )
     if notification.verify_count:
         footer.append(
-            f"🔎 {notification.verify_count} Canvas task"
+            f"{notification.verify_count} Canvas task"
             f"{'s' if notification.verify_count != 1 else ''} need status confirmation."
         )
     if footer:
         lines.extend(["", *footer])
     if notification.notice:
-        lines.extend(["", f"⚠️ {html.escape(notification.notice)}"])
+        lines.extend(["", f"<b>Note</b>\n{html.escape(notification.notice)}"])
     text = "\n".join(lines)
     if len(text) > NOTIFICATION_LIMIT:
         raise ValueError("compact Telegram notification exceeds its limit")

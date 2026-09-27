@@ -201,15 +201,14 @@ def test_home_dashboard_uses_full_width_cards_that_remain_readable_on_phones() -
     blocks = home_dashboard_blocks(urls)
 
     assert blocks[0]["paragraph"]["rich_text"][0]["text"]["content"] == (
-        "Your day, without the clutter."
+        "Today first. Everything else when you need it."
     )
-    assert blocks[1]["callout"]["icon"]["emoji"] == "🎯"
-    assert blocks[1]["callout"]["color"] == "green_background"
+    assert blocks[1]["quote"]["color"] == "gray_background"
     assert not [block for block in blocks if block["type"] == "column_list"]
     card_titles = [
-        block["callout"]["rich_text"][0]["text"]["content"]
+        block["quote"]["rich_text"][0]["text"]["content"]
         for block in blocks
-        if block["type"] == "callout"
+        if block["type"] == "quote"
     ]
     assert card_titles == [
         "Today",
@@ -222,8 +221,7 @@ def test_home_dashboard_uses_full_width_cards_that_remain_readable_on_phones() -
         "Completed",
     ]
     completed = blocks[-2]
-    assert completed["callout"]["icon"]["emoji"] == "✅"
-    assert completed["callout"]["rich_text"][0]["text"]["link"]["url"] == (
+    assert completed["quote"]["rich_text"][0]["text"]["link"]["url"] == (
         urls["Completed"]
     )
 
@@ -284,6 +282,7 @@ class FakeSchoolClient:
         self.archived_databases = []
         self.linked_views = []
         self.updated_database_titles = []
+        self.updated_database_icons = []
         self.updated_page_icons = []
         self.moved_pages = []
         self.database_parent_updates = []
@@ -380,6 +379,10 @@ class FakeSchoolClient:
 
     def update_database_parent_and_icon(self, database_id, parent_page_id, icon):
         self.database_parent_updates.append((database_id, parent_page_id, icon))
+        return {"id": database_id}
+
+    def update_database_icon(self, database_id, icon):
+        self.updated_database_icons.append((database_id, icon))
         return {"id": database_id}
 
 
@@ -533,9 +536,8 @@ def test_calendar_page_gets_one_master_backed_due_view() -> None:
 
     assert result["page_id"] == "today-page"
     assert result["page_created"] is True
-    assert fake.created_pages == [
-        ("Calendar", {"parent_page_id": "parent", "icon": "🗓️"})
-    ]
+    assert fake.created_pages == [("Calendar", {"parent_page_id": "parent"})]
+    assert fake.updated_page_icons == [("today-page", None)]
     parent_id, source_id, spec = fake.linked_views[0]
     assert parent_id == "today-page"
     assert source_id == "master-source"
@@ -634,12 +636,7 @@ def test_home_dashboard_preserves_pages_and_moves_them_behind_visual_cards() -> 
     assert result["navigation_created"] is True
     assert result["moved_pages"] == tuple(page_titles)
     assert result["database_moved"] is True
-    assert fake.created_pages == [
-        (
-            "Pages",
-            {"parent_page_id": "parent", "icon": "🗂️"},
-        )
-    ]
+    assert fake.created_pages == [("Pages", {"parent_page_id": "parent"})]
     assert len(fake.appended_blocks) == 1
     assert fake.appended_blocks[0][0] == "parent"
     assert [page_id for page_id, _ in fake.moved_pages] == [
@@ -647,9 +644,9 @@ def test_home_dashboard_preserves_pages_and_moves_them_behind_visual_cards() -> 
     ]
     assert all(parent_id == "pages-container" for _, parent_id in fake.moved_pages)
     assert fake.database_parent_updates == [
-        ("master-db", "pages-container", "📋")
+        ("master-db", "pages-container", None)
     ]
-    assert ("parent", "✅") in fake.updated_page_icons
+    assert ("parent", None) in fake.updated_page_icons
 
 
 def test_home_dashboard_rebuild_inserts_replacement_before_pages_container() -> None:
@@ -707,6 +704,7 @@ def test_home_dashboard_rebuild_inserts_replacement_before_pages_container() -> 
     assert result["blocks_written"] == 13
     assert fake.appended_blocks[0][2] == {"after": "old-marker"}
     assert fake.archived_blocks == ["old-marker", "old-card"]
+    assert fake.updated_database_icons == [("master-db", None)]
 
 
 def test_legacy_layout_archive_is_narrow_and_requires_preserved_rows() -> None:
@@ -1265,16 +1263,15 @@ def test_focus_dashboard_is_phone_first_and_links_exact_task_rows() -> None:
 
     assert result.url == "https://notion.test/today"
     assert result.page_created is True
-    assert fake.created_pages == [
-        ("Today", {"parent_page_id": "parent", "icon": "🎯"})
-    ]
+    assert fake.created_pages == [("Today", {"parent_page_id": "parent"})]
     assert len(fake.appended_blocks) == 1
     blocks = fake.appended_blocks[0][1]
-    assert [block["type"] for block in blocks] == ["paragraph", "callout", "paragraph"]
-    task_text = blocks[1]["callout"]["rich_text"]
-    assert task_text[0]["text"]["link"] == {"url": "https://notion.test/task-1"}
+    assert [block["type"] for block in blocks] == ["paragraph", "quote", "paragraph"]
+    task_text = blocks[1]["quote"]["rich_text"]
+    assert task_text[1]["text"]["link"] == {"url": "https://notion.test/task-1"}
     assert "17 other task(s)" in blocks[-1]["paragraph"]["rich_text"][0]["text"]["content"]
     assert fake.archived_blocks == []
+    assert fake.updated_page_icons == [("today-page", None)]
 
 
 def test_school_context_reads_notes_and_status_without_canvas_bookkeeping() -> None:

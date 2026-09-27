@@ -29,7 +29,11 @@ SCHOOL_KINDS = ["assignment", "quiz", "discussion_topic", "sub_assignment"]
 DAILY_PLAN_TITLE = "Today's Focus"
 FOCUS_DASHBOARD_TITLE = "Today"
 NAVIGATION_PAGE_TITLE = "Pages"
-HOME_DASHBOARD_MARKER = "Your day, without the clutter."
+HOME_DASHBOARD_MARKER = "Today first. Everything else when you need it."
+HOME_DASHBOARD_MARKERS = {
+    HOME_DASHBOARD_MARKER,
+    "Your day, without the clutter.",
+}
 DAILY_PLAN_STATUSES = ["To do", "Done"]
 MASTER_TASK_TITLE = "All Tasks"
 LEGACY_MASTER_TASK_TITLES = ("Tasks",)
@@ -718,13 +722,12 @@ def _navigation_card(
     description: str,
     url: str,
     *,
-    icon: str,
-    color: str,
+    color: str = "default",
 ) -> dict[str, Any]:
     return {
         "object": "block",
-        "type": "callout",
-        "callout": {
+        "type": "quote",
+        "quote": {
             "rich_text": [
                 {
                     "type": "text",
@@ -737,7 +740,6 @@ def _navigation_card(
                     "annotations": {"color": "gray"},
                 },
             ],
-            "icon": {"type": "emoji", "emoji": icon},
             "color": color,
         },
     }
@@ -794,62 +796,47 @@ def home_dashboard_blocks(urls: dict[str, str]) -> list[dict[str, Any]]:
         },
         _navigation_card(
             "Today",
-            "Start here for your priorities and reminders.",
+            "The short list: what matters now, and what comes next.",
             urls["Today"],
-            icon="🎯",
-            color="green_background",
+            color="gray_background",
         ),
         heading("Plan"),
         _navigation_card(
             "Calendar",
             "See what is due on any day.",
             urls["Calendar"],
-            icon="🗓️",
-            color="blue_background",
         ),
         _navigation_card(
             "All Tasks",
             "Search and review everything.",
             urls["All Tasks"],
-            icon="📋",
-            color="gray_background",
         ),
         heading("Areas"),
         _navigation_card(
             "School",
             "Classes, assignments, and assessments.",
             urls["School"],
-            icon="🎓",
-            color="blue_background",
         ),
         _navigation_card(
             "Work",
             "Projects and personal work.",
             urls["Work"],
-            icon="💼",
-            color="orange_background",
         ),
         _navigation_card(
             "Communications",
             "People, replies, and follow-ups.",
             urls["Communications"],
-            icon="💬",
-            color="purple_background",
         ),
         _navigation_card(
             "Misc",
             "Everything that belongs elsewhere.",
             urls["Misc"],
-            icon="🧩",
-            color="yellow_background",
         ),
         {"object": "block", "type": "divider", "divider": {}},
         _navigation_card(
             "Completed",
             "Done, submitted, waiting, and archived tasks.",
             urls["Completed"],
-            icon="✅",
-            color="gray_background",
         ),
         {
             "object": "block",
@@ -1562,7 +1549,7 @@ class NotionClient:
         )
 
     def update_database_parent_and_icon(
-        self, database_id: str, parent_page_id: str, icon: str
+        self, database_id: str, parent_page_id: str, icon: str | None
     ) -> dict[str, Any]:
         return self._json(
             "PATCH",
@@ -1572,8 +1559,19 @@ class NotionClient:
                     "type": "page_id",
                     "page_id": parent_page_id.replace("-", ""),
                 },
-                "icon": {"type": "emoji", "emoji": icon},
+                "icon": {"type": "emoji", "emoji": icon} if icon else None,
             },
+            idempotent=True,
+            headers=self.view_headers,
+        )
+
+    def update_database_icon(
+        self, database_id: str, icon: str | None
+    ) -> dict[str, Any]:
+        return self._json(
+            "PATCH",
+            f"/databases/{database_id.replace('-', '')}",
+            payload={"icon": {"type": "emoji", "emoji": icon} if icon else None},
             idempotent=True,
             headers=self.view_headers,
         )
@@ -1622,11 +1620,11 @@ class NotionClient:
             headers=self.view_headers,
         )
 
-    def update_page_icon(self, page_id: str, icon: str) -> dict[str, Any]:
+    def update_page_icon(self, page_id: str, icon: str | None) -> dict[str, Any]:
         return self._json(
             "PATCH",
             f"/pages/{page_id.replace('-', '')}",
-            payload={"icon": {"type": "emoji", "emoji": icon}},
+            payload={"icon": {"type": "emoji", "emoji": icon} if icon else None},
             idempotent=True,
             headers=self.view_headers,
         )
@@ -1961,7 +1959,7 @@ class NotionSchoolBoard:
 
     @staticmethod
     def _focus_task_block(task: NotificationTask, *, rank: int) -> dict[str, Any]:
-        icon = "🎯" if rank == 1 else ("2️⃣" if rank == 2 else "3️⃣")
+        position = "First" if rank == 1 else ("Next" if rank == 2 else "Then")
         link = {"url": task.url} if task.url else None
         due = ""
         if task.due_at is not None:
@@ -1976,6 +1974,11 @@ class NotionSchoolBoard:
             if value
         )
         rich_text: list[dict[str, Any]] = [
+            {
+                "type": "text",
+                "text": {"content": f"{position}\n"},
+                "annotations": {"bold": True, "color": "gray"},
+            },
             {
                 "type": "text",
                 "text": {"content": _bounded(task.name, 300), "link": link},
@@ -1994,11 +1997,10 @@ class NotionSchoolBoard:
         )
         return {
             "object": "block",
-            "type": "callout",
-            "callout": {
+            "type": "quote",
+            "quote": {
                 "rich_text": rich_text,
-                "icon": {"type": "emoji", "emoji": icon},
-                "color": "default",
+                "color": "gray_background" if rank == 1 else "default",
             },
         }
 
@@ -2020,10 +2022,10 @@ class NotionSchoolBoard:
             page = self.client.create_child_page(
                 FOCUS_DASHBOARD_TITLE,
                 parent_page_id=navigation_parent_id,
-                icon="🎯",
             )
             page_id = str(page["id"])
             created = True
+        self.client.update_page_icon(page_id, None)
 
         for child in self.client.list_block_children(page_id):
             block_id = str(child.get("id") or "")
@@ -2061,12 +2063,12 @@ class NotionSchoolBoard:
             blocks.append(
                 {
                     "object": "block",
-                    "type": "callout",
-                    "callout": {
+                    "type": "quote",
+                    "quote": {
                         "rich_text": [
                             {"type": "text", "text": {"content": "No focus tasks today."}}
                         ],
-                        "icon": {"type": "emoji", "emoji": "✅"},
+                        "color": "gray_background",
                     },
                 }
             )
@@ -2078,19 +2080,23 @@ class NotionSchoolBoard:
             blocks.append(
                 {
                     "object": "block",
-                    "type": "callout",
-                    "callout": {
+                    "type": "quote",
+                    "quote": {
                         "rich_text": [
                             {
                                 "type": "text",
+                                "text": {"content": "Reminder\n"},
+                                "annotations": {"bold": True, "color": "gray"},
+                            },
+                            {
+                                "type": "text",
                                 "text": {
-                                    "content": _bounded(f"Reminder: {label}", 300),
+                                    "content": _bounded(label, 300),
                                     "link": {"url": reminder.url} if reminder.url else None,
                                 },
                             }
                         ],
-                        "icon": {"type": "emoji", "emoji": "⏰"},
-                        "color": "yellow_background",
+                        "color": "default",
                     },
                 }
             )
@@ -2232,7 +2238,7 @@ class NotionSchoolBoard:
         page_created = False
         if not page_id:
             page = self.client.create_child_page(
-                "Calendar", parent_page_id=navigation_parent_id, icon="🗓️"
+                "Calendar", parent_page_id=navigation_parent_id
             )
             page_id = str(page.get("id") or "")
             if not page_id:
@@ -2242,6 +2248,7 @@ class NotionSchoolBoard:
             raise NotionError(
                 "Calendar already contains a database; refusing to create a duplicate view"
             )
+        self.client.update_page_icon(page_id, None)
 
         database_id = self._master_task_database()
         if not database_id:
@@ -2378,7 +2385,7 @@ class NotionSchoolBoard:
             f"https://www.notion.so/{database_id.replace('-', '')}"
         )
         dashboard_exists = any(
-            self._block_plain_text(block) == HOME_DASHBOARD_MARKER
+            self._block_plain_text(block) in HOME_DASHBOARD_MARKERS
             for block in root_children
         )
         if not dashboard_exists:
@@ -2391,39 +2398,38 @@ class NotionSchoolBoard:
             navigation = self.client.create_child_page(
                 NAVIGATION_PAGE_TITLE,
                 parent_page_id=self.parent_page_id,
-                icon="🗂️",
             )
             navigation_page_id = str(navigation.get("id") or "")
             if not navigation_page_id:
                 raise NotionError("Notion did not return the Pages container id")
             navigation_created = True
 
-        icons = {
-            "Today": "🎯",
-            "Calendar": "🗓️",
-            "School": "🎓",
-            "Work": "💼",
-            "Communications": "💬",
-            "Misc": "🧩",
-            "Completed": "✅",
-        }
         moved_pages: list[str] = []
-        for title, icon in icons.items():
+        for title in (
+            "Today",
+            "Calendar",
+            "School",
+            "Work",
+            "Communications",
+            "Misc",
+            "Completed",
+        ):
             page_id = all_pages[title]
-            self.client.update_page_icon(page_id, icon)
+            self.client.update_page_icon(page_id, None)
             if title in root_pages:
                 self.client.move_page(page_id, navigation_page_id)
                 moved_pages.append(title)
+        self.client.update_page_icon(navigation_page_id, None)
 
         root_databases = self._child_databases(root_children)
         navigation_databases = self._child_databases(navigation_children)
         database_was_root = database_id in root_databases.values()
         if database_was_root or database_id in navigation_databases.values():
             self.client.update_database_parent_and_icon(
-                database_id, navigation_page_id, "📋"
+                database_id, navigation_page_id, None
             )
 
-        self.client.update_page_icon(self.parent_page_id, "✅")
+        self.client.update_page_icon(self.parent_page_id, None)
         return {
             "dashboard_created": not dashboard_exists,
             "navigation_created": navigation_created,
@@ -2478,7 +2484,7 @@ class NotionSchoolBoard:
             (
                 block
                 for block in generated_blocks
-                if self._block_plain_text(block) == HOME_DASHBOARD_MARKER
+                if self._block_plain_text(block) in HOME_DASHBOARD_MARKERS
             ),
             None,
         )
@@ -2498,6 +2504,11 @@ class NotionSchoolBoard:
             if block_id:
                 self.client.archive_block(block_id)
                 archived += 1
+        for page_id in pages.values():
+            self.client.update_page_icon(page_id, None)
+        self.client.update_page_icon(navigation_page_id, None)
+        self.client.update_page_icon(self.parent_page_id, None)
+        self.client.update_database_icon(database_id, None)
         return {
             "blocks_written": len(new_blocks),
             "blocks_archived": archived,

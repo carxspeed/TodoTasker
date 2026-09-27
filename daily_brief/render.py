@@ -123,7 +123,7 @@ def render_brief(
     all_warnings = [*(warnings or []), *classification.warnings]
     if all_warnings:
         lines.extend(["", "Warnings"])
-        lines.extend(f"- ⚠️ {warning}" for warning in all_warnings)
+        lines.extend(f"- Note: {warning}" for warning in all_warnings)
     if classification.verify:
         lines.extend(["", "Verify urgently"])
         for item in classification.verify:
