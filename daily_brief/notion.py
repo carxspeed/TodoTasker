@@ -348,15 +348,16 @@ def master_view_specs(
         }
 
     table_visible = [
+        ("Done", 70, False),
         ("Task", 260, True),
         ("Open", 80, False),
         ("Status", 110, False),
+        ("Due", 145, False),
         ("Course", 150, True),
         ("Display type", 115, False),
-        ("Due", 145, False),
         ("Priority", 90, False),
         ("Next step", 420, True),
-        ("Notes / progress", 320, True),
+        ("Notes / progress", 340, True),
         ("Instructions", 420, True),
         ("Last touched", 120, False),
     ]
@@ -409,41 +410,16 @@ def master_view_specs(
     specs = [
         {
             "name": "Active",
-            "type": "gallery",
+            "type": "table",
             "filter": active_filter(),
             "sorts": active_sorts,
             "quick_filters": {},
             "configuration": {
-                "type": "gallery",
-                "properties": [
-                    {
-                        **item,
-                        **(
-                            {
-                                "wrap": True,
-                                "card_property_width_mode": "full_line",
-                            }
-                            if item["property_id"] == property_ids["Next step"]
-                            else {}
-                        ),
-                    }
-                    for item in properties(
-                        [
-                            "Task",
-                            "Status",
-                            "Due",
-                            "Course",
-                            "Display type",
-                            "Priority",
-                            "Next step",
-                            "Open",
-                        ]
-                    )
-                ],
-                "cover": None,
-                "cover_size": None,
-                "cover_aspect": None,
-                "card_layout": "compact",
+                "type": "table",
+                "properties": properties(table=True),
+                "wrap_cells": False,
+                "frozen_column_index": 1,
+                "show_vertical_lines": True,
             },
             "position": {"type": "start"},
         },

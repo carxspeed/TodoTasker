@@ -126,19 +126,28 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
 
     assert list(specs) == ["Active"]
     active = specs["Active"]
-    assert active["type"] == "gallery"
-    assert active["configuration"]["cover"] is None
-    assert active["configuration"]["card_layout"] == "compact"
+    assert active["type"] == "table"
     columns = active["configuration"]["properties"]
     by_id = {column["property_id"]: column for column in columns}
+    visible_ids = [column["property_id"] for column in columns if column["visible"]]
+    assert visible_ids[:3] == [
+        property_ids["Done"],
+        property_ids["Task"],
+        property_ids["Open"],
+    ]
+    assert by_id[property_ids["Done"]]["visible"] is True
     assert by_id[property_ids["Next step"]]["visible"] is True
     assert by_id[property_ids["Next step"]]["wrap"] is True
-    assert by_id[property_ids["Next step"]]["card_property_width_mode"] == (
-        "full_line"
-    )
-    assert by_id[property_ids["Instructions"]]["visible"] is False
+    assert by_id[property_ids["Next step"]]["width"] == 420
+    assert by_id[property_ids["Notes / progress"]]["width"] == 340
+    assert by_id[property_ids["Instructions"]]["visible"] is True
+    assert by_id[property_ids["Instructions"]]["width"] == 420
     assert by_id[property_ids["Focus rank"]]["visible"] is False
     assert by_id[property_ids["Source ID"]]["visible"] is False
+    assert active["sorts"][:2] == [
+        {"property": property_ids["Sort order"], "direction": "ascending"},
+        {"property": property_ids["Due"], "direction": "ascending"},
+    ]
     all_specs = {
         spec["name"]: spec
         for spec in master_view_specs(property_ids, primary_only=False)
