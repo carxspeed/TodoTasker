@@ -1966,7 +1966,7 @@ class NotionSchoolBoard:
 
     @staticmethod
     def _focus_task_block(task: NotificationTask, *, rank: int) -> dict[str, Any]:
-        position = "First" if rank == 1 else ("Next" if rank == 2 else "Then")
+        icon = "🎯" if rank == 1 else ("2️⃣" if rank == 2 else "3️⃣")
         link = {"url": task.url} if task.url else None
         due = ""
         if task.due_at is not None:
@@ -1981,11 +1981,6 @@ class NotionSchoolBoard:
             if value
         )
         rich_text: list[dict[str, Any]] = [
-            {
-                "type": "text",
-                "text": {"content": f"{position}\n"},
-                "annotations": {"bold": True, "color": "gray"},
-            },
             {
                 "type": "text",
                 "text": {"content": _bounded(task.name, 300), "link": link},
@@ -2004,10 +1999,11 @@ class NotionSchoolBoard:
         )
         return {
             "object": "block",
-            "type": "quote",
-            "quote": {
+            "type": "callout",
+            "callout": {
                 "rich_text": rich_text,
-                "color": "gray_background" if rank == 1 else "default",
+                "icon": {"type": "emoji", "emoji": icon},
+                "color": "default",
             },
         }
 
@@ -2029,10 +2025,11 @@ class NotionSchoolBoard:
             page = self.client.create_child_page(
                 FOCUS_DASHBOARD_TITLE,
                 parent_page_id=navigation_parent_id,
+                icon="🎯",
             )
             page_id = str(page["id"])
             created = True
-        self.client.update_page_icon(page_id, None)
+        self.client.update_page_icon(page_id, "🎯")
 
         for child in self.client.list_block_children(page_id):
             block_id = str(child.get("id") or "")
@@ -2070,12 +2067,12 @@ class NotionSchoolBoard:
             blocks.append(
                 {
                     "object": "block",
-                    "type": "quote",
-                    "quote": {
+                    "type": "callout",
+                    "callout": {
                         "rich_text": [
                             {"type": "text", "text": {"content": "No focus tasks today."}}
                         ],
-                        "color": "gray_background",
+                        "icon": {"type": "emoji", "emoji": "✅"},
                     },
                 }
             )
@@ -2087,23 +2084,19 @@ class NotionSchoolBoard:
             blocks.append(
                 {
                     "object": "block",
-                    "type": "quote",
-                    "quote": {
+                    "type": "callout",
+                    "callout": {
                         "rich_text": [
                             {
                                 "type": "text",
-                                "text": {"content": "Reminder\n"},
-                                "annotations": {"bold": True, "color": "gray"},
-                            },
-                            {
-                                "type": "text",
                                 "text": {
-                                    "content": _bounded(label, 300),
+                                    "content": _bounded(f"Reminder: {label}", 300),
                                     "link": {"url": reminder.url} if reminder.url else None,
                                 },
                             }
                         ],
-                        "color": "default",
+                        "icon": {"type": "emoji", "emoji": "⏰"},
+                        "color": "yellow_background",
                     },
                 }
             )

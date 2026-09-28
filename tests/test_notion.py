@@ -1327,15 +1327,22 @@ def test_focus_dashboard_is_phone_first_and_links_exact_task_rows() -> None:
 
     assert result.url == "https://notion.test/today"
     assert result.page_created is True
-    assert fake.created_pages == [("Today", {"parent_page_id": "parent"})]
+    assert fake.created_pages == [
+        ("Today", {"parent_page_id": "parent", "icon": "🎯"})
+    ]
     assert len(fake.appended_blocks) == 1
     blocks = fake.appended_blocks[0][1]
-    assert [block["type"] for block in blocks] == ["paragraph", "quote", "paragraph"]
-    task_text = blocks[1]["quote"]["rich_text"]
-    assert task_text[1]["text"]["link"] == {"url": "https://notion.test/task-1"}
+    assert [block["type"] for block in blocks] == [
+        "paragraph",
+        "callout",
+        "paragraph",
+    ]
+    assert blocks[1]["callout"]["icon"]["emoji"] == "🎯"
+    task_text = blocks[1]["callout"]["rich_text"]
+    assert task_text[0]["text"]["link"] == {"url": "https://notion.test/task-1"}
     assert "17 other task(s)" in blocks[-1]["paragraph"]["rich_text"][0]["text"]["content"]
     assert fake.archived_blocks == []
-    assert fake.updated_page_icons == [("today-page", None)]
+    assert fake.updated_page_icons == [("today-page", "🎯")]
 
 
 def test_school_context_reads_notes_and_status_without_canvas_bookkeeping() -> None:
