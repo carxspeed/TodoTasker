@@ -965,6 +965,7 @@ class DailyBriefOrchestrator:
                             + master_result.database_id.replace("-", "")
                         ),
                     )
+                    self.notion_delivery.sync_home_dashboard(notification)
                     notion_result = master_result
                     task_urls = master_result.task_urls
                 else:

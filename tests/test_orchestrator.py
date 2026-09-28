@@ -95,6 +95,7 @@ class MasterNotionDelivery(NotionDelivery):
         self.master_sync_calls = 0
         self.master_focus_calls = 0
         self.focus_dashboard_calls = 0
+        self.home_dashboard_calls = 0
         self.task_urls = {}
 
     def master_tasks_enabled(self):
@@ -136,6 +137,10 @@ class MasterNotionDelivery(NotionDelivery):
     def sync_focus_dashboard(self, *args, **kwargs):
         self.focus_dashboard_calls += 1
         return SchoolSyncResult("today", "https://notion.test/today")
+
+    def sync_home_dashboard(self, *args, **kwargs):
+        self.home_dashboard_calls += 1
+        return {"blocks_written": 11}
 
 
 class Telegram:
@@ -551,6 +556,7 @@ def test_master_layout_is_the_source_of_truth_and_routes_delivery_without_duplic
     assert notion.master_sync_calls == 1
     assert notion.master_focus_calls == 1
     assert notion.focus_dashboard_calls == 1
+    assert notion.home_dashboard_calls == 1
     assert notion.calls == 0
     assert notion.plan_calls == 0
     assert telegram.last_notification.primary.url == "https://notion.test/exact-assignment"

@@ -30,6 +30,7 @@ DAILY_PLAN_TITLE = "Today's Focus"
 FOCUS_DASHBOARD_TITLE = "Today"
 NAVIGATION_PAGE_TITLE = "Pages"
 HOME_DASHBOARD_MARKER = "Today first. Everything else when you need it."
+HOME_DASHBOARD_UPDATED_SUFFIX = "· updated this morning."
 HOME_DASHBOARD_MARKERS = {
     HOME_DASHBOARD_MARKER,
     "Your day, without the clutter.",
@@ -718,36 +719,11 @@ def task_area_page_specs(property_ids: dict[str, str]) -> dict[str, dict[str, An
     }
 
 
-def _navigation_card(
-    title: str,
-    description: str,
-    url: str,
-    *,
-    color: str = "default",
-) -> dict[str, Any]:
-    return {
-        "object": "block",
-        "type": "quote",
-        "quote": {
-            "rich_text": [
-                {
-                    "type": "text",
-                    "text": {"content": title, "link": {"url": url}},
-                    "annotations": {"bold": True},
-                },
-                {
-                    "type": "text",
-                    "text": {"content": f"\n{description}"},
-                    "annotations": {"color": "gray"},
-                },
-            ],
-            "color": color,
-        },
-    }
-
-
-def home_dashboard_blocks(urls: dict[str, str]) -> list[dict[str, Any]]:
-    """Build the calm, phone-friendly home navigation without duplicating data."""
+def home_dashboard_blocks(
+    urls: dict[str, str],
+    notification: DailyNotification | None = None,
+) -> list[dict[str, Any]]:
+    """Build a compact home preview with one action and lightweight navigation."""
     required = {
         "Today",
         "Calendar",
@@ -781,6 +757,110 @@ def home_dashboard_blocks(urls: dict[str, str]) -> list[dict[str, Any]]:
             },
         }
 
+    def linked_line(labels: tuple[str, ...]) -> dict[str, Any]:
+        rich_text: list[dict[str, Any]] = []
+        for index, label in enumerate(labels):
+            if index:
+                rich_text.append(
+                    {
+                        "type": "text",
+                        "text": {"content": "  ·  "},
+                        "annotations": {"color": "gray"},
+                    }
+                )
+            rich_text.append(
+                {
+                    "type": "text",
+                    "text": {"content": label, "link": {"url": urls[label]}},
+                    "annotations": {"bold": True},
+                }
+            )
+        return {
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {"rich_text": rich_text},
+        }
+
+    marker_text = HOME_DASHBOARD_MARKER
+    if notification is not None:
+        marker_text = (
+            f"{notification.target_date.strftime('%A, %B')} "
+            f"{notification.target_date.day} {HOME_DASHBOARD_UPDATED_SUFFIX}"
+        )
+
+    primary = notification.primary if notification is not None else None
+    if primary is not None:
+        due = ""
+        if primary.due_at is not None:
+            due = f"Due {primary.due_at.strftime('%a %b')} {primary.due_at.day}"
+        metadata = " · ".join(
+            value
+            for value in (
+                _bounded(primary.course, 80),
+                due,
+            )
+            if value
+        )
+        primary_rich_text: list[dict[str, Any]] = [
+            {
+                "type": "text",
+                "text": {
+                    "content": _bounded(primary.name, 300),
+                    "link": {"url": primary.url} if primary.url else None,
+                },
+                "annotations": {"bold": True},
+            }
+        ]
+        if metadata:
+            primary_rich_text.append(
+                {
+                    "type": "text",
+                    "text": {"content": f"\n{metadata}"},
+                    "annotations": {"color": "gray"},
+                }
+            )
+        primary_rich_text.append(
+            {
+                "type": "text",
+                "text": {"content": f"\n{_bounded(primary.next_step, 300)}"},
+            }
+        )
+        if primary.url:
+            primary_rich_text.extend(
+                [
+                    {"type": "text", "text": {"content": "\n"}},
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "Open task →",
+                            "link": {"url": primary.url},
+                        },
+                        "annotations": {"bold": True},
+                    },
+                ]
+            )
+    else:
+        primary_rich_text = [
+            {
+                "type": "text",
+                "text": {
+                    "content": "Open today's short plan →",
+                    "link": {"url": urls["Today"]},
+                },
+                "annotations": {"bold": True},
+            }
+        ]
+
+    more_tasks = len(notification.followups) if notification is not None else 0
+    reminders = len(notification.reminders) if notification is not None else 0
+    task_word = "task" if more_tasks == 1 else "tasks"
+    reminder_word = "reminder" if reminders == 1 else "reminders"
+    today_summary = (
+        f"{more_tasks} more {task_word} · {reminders} {reminder_word}"
+        if notification is not None
+        else "Your short plan and reminders"
+    )
+
     return [
         {
             "object": "block",
@@ -789,56 +869,21 @@ def home_dashboard_blocks(urls: dict[str, str]) -> list[dict[str, Any]]:
                 "rich_text": [
                     {
                         "type": "text",
-                        "text": {"content": HOME_DASHBOARD_MARKER},
+                        "text": {"content": marker_text},
                         "annotations": {"italic": True, "color": "gray"},
                     }
                 ]
             },
         },
-        _navigation_card(
-            "Today",
-            "The short list: what matters now, and what comes next.",
-            urls["Today"],
-            color="gray_background",
-        ),
-        heading("Plan"),
-        _navigation_card(
-            "Calendar",
-            "See what is due on any day.",
-            urls["Calendar"],
-        ),
-        _navigation_card(
-            "All Tasks",
-            "Search and review everything.",
-            urls["All Tasks"],
-        ),
-        heading("Areas"),
-        _navigation_card(
-            "School",
-            "Classes, assignments, and assessments.",
-            urls["School"],
-        ),
-        _navigation_card(
-            "Work",
-            "Projects and personal work.",
-            urls["Work"],
-        ),
-        _navigation_card(
-            "Communications",
-            "People, replies, and follow-ups.",
-            urls["Communications"],
-        ),
-        _navigation_card(
-            "Misc",
-            "Everything that belongs elsewhere.",
-            urls["Misc"],
-        ),
-        {"object": "block", "type": "divider", "divider": {}},
-        _navigation_card(
-            "Completed",
-            "Done, submitted, waiting, and archived tasks.",
-            urls["Completed"],
-        ),
+        heading("Start here"),
+        {
+            "object": "block",
+            "type": "quote",
+            "quote": {
+                "rich_text": primary_rich_text,
+                "color": "gray_background",
+            },
+        },
         {
             "object": "block",
             "type": "paragraph",
@@ -847,13 +892,33 @@ def home_dashboard_blocks(urls: dict[str, str]) -> list[dict[str, Any]]:
                     {
                         "type": "text",
                         "text": {
-                            "content": "TodoTasker keeps these pages synced automatically."
+                            "content": "Today",
+                            "link": {"url": urls["Today"]},
                         },
+                        "annotations": {"bold": True},
+                    },
+                    {
+                        "type": "text",
+                        "text": {"content": f"\n{today_summary}"},
                         "annotations": {"color": "gray"},
-                    }
+                    },
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "\nView today's plan →",
+                            "link": {"url": urls["Today"]},
+                        },
+                    },
                 ]
             },
         },
+        {"object": "block", "type": "divider", "divider": {}},
+        heading("Plan"),
+        linked_line(("Calendar", "All Tasks")),
+        heading("Areas"),
+        linked_line(("School", "Work", "Communications", "Misc")),
+        {"object": "block", "type": "divider", "divider": {}},
+        linked_line(("Completed",)),
     ]
 
 
@@ -1952,6 +2017,14 @@ class NotionSchoolBoard:
             for item in body.get("rich_text") or []
         ).strip()
 
+    @classmethod
+    def _is_home_dashboard_marker(cls, block: dict[str, Any]) -> bool:
+        text = cls._block_plain_text(block)
+        return (
+            text in HOME_DASHBOARD_MARKERS
+            or text.endswith(HOME_DASHBOARD_UPDATED_SUFFIX)
+        )
+
     @staticmethod
     def _focus_task_block(task: NotificationTask, *, rank: int) -> dict[str, Any]:
         icon = "🎯" if rank == 1 else ("2️⃣" if rank == 2 else "3️⃣")
@@ -2380,8 +2453,7 @@ class NotionSchoolBoard:
             f"https://www.notion.so/{database_id.replace('-', '')}"
         )
         dashboard_exists = any(
-            self._block_plain_text(block) in HOME_DASHBOARD_MARKERS
-            for block in root_children
+            self._is_home_dashboard_marker(block) for block in root_children
         )
         if not dashboard_exists:
             self.client.append_block_children(
@@ -2433,8 +2505,11 @@ class NotionSchoolBoard:
             "database_moved": database_was_root,
         }
 
-    def rebuild_home_dashboard(self) -> dict[str, Any]:
-        """Replace generated home cards in place while keeping the Pages link last."""
+    def rebuild_home_dashboard(
+        self,
+        notification: DailyNotification | None = None,
+    ) -> dict[str, Any]:
+        """Replace the home preview in place while keeping the Pages link last."""
         root_children = self.client.list_block_children(self.parent_page_id)
         navigation_page_id = self._child_pages(root_children).get(
             NAVIGATION_PAGE_TITLE
@@ -2479,7 +2554,7 @@ class NotionSchoolBoard:
             (
                 block
                 for block in generated_blocks
-                if self._block_plain_text(block) in HOME_DASHBOARD_MARKERS
+                if self._is_home_dashboard_marker(block)
             ),
             None,
         )
@@ -2499,7 +2574,7 @@ class NotionSchoolBoard:
         if not marker_id:
             raise NotionError("generated home dashboard marker was not found")
 
-        new_blocks = home_dashboard_blocks(urls)
+        new_blocks = home_dashboard_blocks(urls, notification)
         self.client.append_block_children(
             self.parent_page_id,
             new_blocks,
@@ -2519,6 +2594,13 @@ class NotionSchoolBoard:
             "blocks_written": len(new_blocks),
             "blocks_archived": archived,
         }
+
+    def sync_home_dashboard(
+        self,
+        notification: DailyNotification,
+    ) -> dict[str, Any]:
+        """Refresh the home preview from the same daily plan used by Today."""
+        return self.rebuild_home_dashboard(notification)
 
     def migrate_legacy_school_rows(self) -> LegacySchoolMigrationResult:
         """Preserve legacy class-table history before those databases are archived."""

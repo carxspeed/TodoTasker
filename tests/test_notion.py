@@ -199,7 +199,9 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
     assert property_ids["Course"] not in visible_school_ids
 
 
-def test_home_dashboard_keeps_the_preexisting_quote_layout() -> None:
+def test_home_dashboard_shows_one_action_and_compact_navigation() -> None:
+    from datetime import datetime, timezone
+
     urls = {
         title: f"https://notion.test/{title.lower().replace(' ', '-')}"
         for title in (
@@ -213,30 +215,65 @@ def test_home_dashboard_keeps_the_preexisting_quote_layout() -> None:
             "Completed",
         )
     }
+    primary = NotificationTask(
+        key="assignment:1",
+        name="Finish the physics lab",
+        course="AP Physics",
+        next_step="Complete the graph and write the conclusion.",
+        due_at=datetime(2026, 9, 27, 21, 0, tzinfo=timezone.utc),
+        effort_hours=1.5,
+        url="https://notion.test/task-1",
+    )
+    notification = DailyNotification(
+        target_date=date(2026, 9, 27),
+        primary=primary,
+        followups=[
+            primary.model_copy(update={"key": "assignment:2", "name": "Second task"}),
+            primary.model_copy(update={"key": "assignment:3", "name": "Third task"}),
+        ],
+    )
 
-    blocks = home_dashboard_blocks(urls)
+    blocks = home_dashboard_blocks(urls, notification)
 
     assert blocks[0]["paragraph"]["rich_text"][0]["text"]["content"] == (
-        "Today first. Everything else when you need it."
+        "Sunday, September 27 · updated this morning."
     )
-    cards = [
-        block["quote"]
-        for block in blocks
-        if block["type"] == "quote"
+    assert [block["type"] for block in blocks] == [
+        "paragraph",
+        "heading_2",
+        "quote",
+        "paragraph",
+        "divider",
+        "heading_2",
+        "paragraph",
+        "heading_2",
+        "paragraph",
+        "divider",
+        "paragraph",
     ]
-    assert [card["rich_text"][0]["text"]["content"] for card in cards] == [
-        "Today",
-        "Calendar",
-        "All Tasks",
-        "School",
-        "Work",
-        "Communications",
-        "Misc",
-        "Completed",
+    start_here = blocks[2]["quote"]
+    assert start_here["color"] == "gray_background"
+    assert start_here["rich_text"][0]["text"]["content"] == "Finish the physics lab"
+    assert start_here["rich_text"][0]["text"]["link"]["url"] == (
+        "https://notion.test/task-1"
+    )
+    assert "Complete the graph" in start_here["rich_text"][2]["text"]["content"]
+    today_text = "".join(
+        item["text"]["content"] for item in blocks[3]["paragraph"]["rich_text"]
+    )
+    assert "2 more tasks · 0 reminders" in today_text
+    plan_links = [
+        item["text"]["content"]
+        for item in blocks[6]["paragraph"]["rich_text"]
+        if item["text"].get("link")
     ]
-    assert cards[0]["color"] == "gray_background"
-    assert cards[0]["rich_text"][0]["text"]["link"]["url"] == urls["Today"]
-    assert cards[-1]["rich_text"][0]["text"]["link"]["url"] == urls["Completed"]
+    assert plan_links == ["Calendar", "All Tasks"]
+    area_links = [
+        item["text"]["content"]
+        for item in blocks[8]["paragraph"]["rich_text"]
+        if item["text"].get("link")
+    ]
+    assert area_links == ["School", "Work", "Communications", "Misc"]
     assert not [block for block in blocks if block["type"] == "column_list"]
 
 
@@ -710,7 +747,7 @@ def test_home_dashboard_rebuild_inserts_replacement_before_pages_container() -> 
     result = board.rebuild_home_dashboard()
 
     assert result["blocks_archived"] == 2
-    assert result["blocks_written"] == 13
+    assert result["blocks_written"] == 11
     assert fake.appended_blocks[0][2] == {"after": "old-marker"}
     assert fake.archived_blocks == ["old-marker", "old-card"]
 
@@ -765,7 +802,7 @@ def test_home_dashboard_rebuild_recovers_when_marker_text_is_missing() -> None:
 
     result = board.rebuild_home_dashboard()
 
-    assert result["blocks_written"] == 13
+    assert result["blocks_written"] == 11
     assert fake.appended_blocks[0][2] == {"after": "blank-marker"}
 
 
