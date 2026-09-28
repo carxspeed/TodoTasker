@@ -718,17 +718,17 @@ def task_area_page_specs(property_ids: dict[str, str]) -> dict[str, dict[str, An
     }
 
 
-def _navigation_link(
+def _navigation_card(
     title: str,
     description: str,
     url: str,
     *,
-    compact: bool = False,
+    color: str = "default",
 ) -> dict[str, Any]:
     return {
         "object": "block",
-        "type": "paragraph",
-        "paragraph": {
+        "type": "quote",
+        "quote": {
             "rich_text": [
                 {
                     "type": "text",
@@ -737,13 +737,11 @@ def _navigation_link(
                 },
                 {
                     "type": "text",
-                    "text": {
-                        "content": f" — {description}" if compact else f"\n{description}"
-                    },
+                    "text": {"content": f"\n{description}"},
                     "annotations": {"color": "gray"},
                 },
             ],
-            "color": "default",
+            "color": color,
         },
     }
 
@@ -797,60 +795,50 @@ def home_dashboard_blocks(urls: dict[str, str]) -> list[dict[str, Any]]:
                 ]
             },
         },
-        heading("Today"),
-        _navigation_link(
-            "Open today's focus",
-            "A short, ordered plan with one clear place to start.",
+        _navigation_card(
+            "Today",
+            "The short list: what matters now, and what comes next.",
             urls["Today"],
+            color="gray_background",
         ),
-        {"object": "block", "type": "divider", "divider": {}},
         heading("Plan"),
-        _navigation_link(
+        _navigation_card(
             "Calendar",
             "See what is due on any day.",
             urls["Calendar"],
-            compact=True,
         ),
-        _navigation_link(
-            "All tasks",
-            "Update completion, notes, and next steps.",
+        _navigation_card(
+            "All Tasks",
+            "Search and review everything.",
             urls["All Tasks"],
-            compact=True,
         ),
-        {"object": "block", "type": "divider", "divider": {}},
         heading("Areas"),
-        _navigation_link(
+        _navigation_card(
             "School",
             "Classes, assignments, and assessments.",
             urls["School"],
-            compact=True,
         ),
-        _navigation_link(
+        _navigation_card(
             "Work",
             "Projects and personal work.",
             urls["Work"],
-            compact=True,
         ),
-        _navigation_link(
+        _navigation_card(
             "Communications",
             "People, replies, and follow-ups.",
             urls["Communications"],
-            compact=True,
         ),
-        _navigation_link(
+        _navigation_card(
             "Misc",
             "Everything that belongs elsewhere.",
             urls["Misc"],
-            compact=True,
         ),
         {"object": "block", "type": "divider", "divider": {}},
-        _navigation_link(
+        _navigation_card(
             "Completed",
             "Done, submitted, waiting, and archived tasks.",
             urls["Completed"],
-            compact=True,
         ),
-        {"object": "block", "type": "divider", "divider": {}},
         {
             "object": "block",
             "type": "paragraph",
@@ -859,7 +847,7 @@ def home_dashboard_blocks(urls: dict[str, str]) -> list[dict[str, Any]]:
                     {
                         "type": "text",
                         "text": {
-                            "content": "TodoTasker keeps these pages in sync."
+                            "content": "TodoTasker keeps these pages synced automatically."
                         },
                         "annotations": {"color": "gray"},
                     }
@@ -1967,6 +1955,13 @@ class NotionSchoolBoard:
     @staticmethod
     def _focus_task_block(task: NotificationTask, *, rank: int) -> dict[str, Any]:
         icon = "🎯" if rank == 1 else ("2️⃣" if rank == 2 else "3️⃣")
+        color = (
+            "green_background"
+            if rank == 1
+            else "blue_background"
+            if rank == 2
+            else "purple_background"
+        )
         link = {"url": task.url} if task.url else None
         due = ""
         if task.due_at is not None:
@@ -2003,7 +1998,7 @@ class NotionSchoolBoard:
             "callout": {
                 "rich_text": rich_text,
                 "icon": {"type": "emoji", "emoji": icon},
-                "color": "default",
+                "color": color,
             },
         }
 

@@ -199,7 +199,7 @@ def test_master_views_hide_bookkeeping_and_give_actions_real_width() -> None:
     assert property_ids["Course"] not in visible_school_ids
 
 
-def test_home_dashboard_uses_a_single_column_phone_safe_navigation() -> None:
+def test_home_dashboard_keeps_the_preexisting_quote_layout() -> None:
     urls = {
         title: f"https://notion.test/{title.lower().replace(' ', '-')}"
         for title in (
@@ -219,26 +219,24 @@ def test_home_dashboard_uses_a_single_column_phone_safe_navigation() -> None:
     assert blocks[0]["paragraph"]["rich_text"][0]["text"]["content"] == (
         "Today first. Everything else when you need it."
     )
-    links = [
-        block["paragraph"]["rich_text"][0]["text"]
+    cards = [
+        block["quote"]
         for block in blocks
-        if block["type"] == "paragraph"
-        and block["paragraph"]["rich_text"]
-        and block["paragraph"]["rich_text"][0]["text"].get("link")
+        if block["type"] == "quote"
     ]
-    assert [link["content"] for link in links] == [
-        "Open today's focus",
+    assert [card["rich_text"][0]["text"]["content"] for card in cards] == [
+        "Today",
         "Calendar",
-        "All tasks",
+        "All Tasks",
         "School",
         "Work",
         "Communications",
         "Misc",
         "Completed",
     ]
-    assert links[0]["link"]["url"] == urls["Today"]
-    assert links[-1]["link"]["url"] == urls["Completed"]
-    assert not [block for block in blocks if block["type"] == "quote"]
+    assert cards[0]["color"] == "gray_background"
+    assert cards[0]["rich_text"][0]["text"]["link"]["url"] == urls["Today"]
+    assert cards[-1]["rich_text"][0]["text"]["link"]["url"] == urls["Completed"]
     assert not [block for block in blocks if block["type"] == "column_list"]
 
 
@@ -712,7 +710,7 @@ def test_home_dashboard_rebuild_inserts_replacement_before_pages_container() -> 
     result = board.rebuild_home_dashboard()
 
     assert result["blocks_archived"] == 2
-    assert result["blocks_written"] == 17
+    assert result["blocks_written"] == 13
     assert fake.appended_blocks[0][2] == {"after": "old-marker"}
     assert fake.archived_blocks == ["old-marker", "old-card"]
 
@@ -767,7 +765,7 @@ def test_home_dashboard_rebuild_recovers_when_marker_text_is_missing() -> None:
 
     result = board.rebuild_home_dashboard()
 
-    assert result["blocks_written"] == 17
+    assert result["blocks_written"] == 13
     assert fake.appended_blocks[0][2] == {"after": "blank-marker"}
 
 
@@ -1338,11 +1336,41 @@ def test_focus_dashboard_is_phone_first_and_links_exact_task_rows() -> None:
         "paragraph",
     ]
     assert blocks[1]["callout"]["icon"]["emoji"] == "🎯"
+    assert blocks[1]["callout"]["color"] == "green_background"
     task_text = blocks[1]["callout"]["rich_text"]
     assert task_text[0]["text"]["link"] == {"url": "https://notion.test/task-1"}
     assert "17 other task(s)" in blocks[-1]["paragraph"]["rich_text"][0]["text"]["content"]
     assert fake.archived_blocks == []
     assert fake.updated_page_icons == [("today-page", "🎯")]
+
+
+def test_focus_task_callouts_have_distinct_rank_colors() -> None:
+    from datetime import datetime, timezone
+
+    task = NotificationTask(
+        key="assignment:1",
+        name="Finish the physics lab",
+        course="AP Physics",
+        next_step="Complete the graph.",
+        due_at=datetime(2026, 9, 21, 21, 0, tzinfo=timezone.utc),
+        effort_hours=1.5,
+    )
+
+    blocks = [
+        NotionSchoolBoard._focus_task_block(task, rank=rank)
+        for rank in (1, 2, 3)
+    ]
+
+    assert [block["callout"]["color"] for block in blocks] == [
+        "green_background",
+        "blue_background",
+        "purple_background",
+    ]
+    assert [block["callout"]["icon"]["emoji"] for block in blocks] == [
+        "🎯",
+        "2️⃣",
+        "3️⃣",
+    ]
 
 
 def test_school_context_reads_notes_and_status_without_canvas_bookkeeping() -> None:
