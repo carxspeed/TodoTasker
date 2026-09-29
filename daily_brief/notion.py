@@ -28,6 +28,7 @@ SCHOOL_PRIORITIES = ["MUST", "SMART", "MAY", "Later", "Verify"]
 SCHOOL_KINDS = ["assignment", "quiz", "discussion_topic", "sub_assignment"]
 DAILY_PLAN_TITLE = "Today's Focus"
 FOCUS_DASHBOARD_TITLE = "Today"
+PERSISTENT_TODAY_REMINDER = "Check Differential Equations."
 NAVIGATION_PAGE_TITLE = "Pages"
 HOME_DASHBOARD_MARKER = "Today first. Everything else when you need it."
 HOME_DASHBOARD_UPDATED_SUFFIX = "· updated this morning."
@@ -2168,6 +2169,27 @@ class NotionSchoolBoard:
                     },
                 }
             )
+
+        blocks.append(
+            {
+                "object": "block",
+                "type": "quote",
+                "quote": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {"content": "Bellevue College"},
+                            "annotations": {"bold": True},
+                        },
+                        {
+                            "type": "text",
+                            "text": {"content": f"\n{PERSISTENT_TODAY_REMINDER}"},
+                        },
+                    ],
+                    "color": "yellow_background",
+                },
+            }
+        )
 
         backlog_text = f"{notification.backlog_count} other task(s) are safely kept out of today's view."
         if notification.verify_count:

@@ -1370,12 +1370,18 @@ def test_focus_dashboard_is_phone_first_and_links_exact_task_rows() -> None:
     assert [block["type"] for block in blocks] == [
         "paragraph",
         "callout",
+        "quote",
         "paragraph",
     ]
     assert blocks[1]["callout"]["icon"]["emoji"] == "🎯"
     assert blocks[1]["callout"]["color"] == "green_background"
     task_text = blocks[1]["callout"]["rich_text"]
     assert task_text[0]["text"]["link"] == {"url": "https://notion.test/task-1"}
+    reminder_text = "".join(
+        item["text"]["content"] for item in blocks[2]["quote"]["rich_text"]
+    )
+    assert reminder_text == "Bellevue College\nCheck Differential Equations."
+    assert blocks[2]["quote"]["color"] == "yellow_background"
     assert "17 other task(s)" in blocks[-1]["paragraph"]["rich_text"][0]["text"]["content"]
     assert fake.archived_blocks == []
     assert fake.updated_page_icons == [("today-page", "🎯")]
