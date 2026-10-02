@@ -206,6 +206,7 @@ def test_home_dashboard_shows_one_action_and_compact_navigation() -> None:
         title: f"https://notion.test/{title.lower().replace(' ', '-')}"
         for title in (
             "Today",
+            "Due & Late",
             "Calendar",
             "All Tasks",
             "School",
@@ -267,7 +268,7 @@ def test_home_dashboard_shows_one_action_and_compact_navigation() -> None:
         for item in blocks[6]["paragraph"]["rich_text"]
         if item["text"].get("link")
     ]
-    assert plan_links == ["Calendar", "All Tasks"]
+    assert plan_links == ["Calendar", "Due & Late", "All Tasks"]
     area_links = [
         item["text"]["content"]
         for item in blocks[8]["paragraph"]["rich_text"]
@@ -643,6 +644,7 @@ def test_home_dashboard_preserves_pages_and_moves_them_behind_visual_cards() -> 
     fake = FakeSchoolClient()
     page_titles = [
         "Today",
+        "Due & Late",
         "Calendar",
         "School",
         "Work",
@@ -680,6 +682,7 @@ def test_home_dashboard_preserves_pages_and_moves_them_behind_visual_cards() -> 
 
     assert result["dashboard_created"] is True
     assert result["navigation_created"] is True
+    assert result["due_page_created"] is False
     assert result["moved_pages"] == tuple(page_titles)
     assert result["database_moved"] is True
     assert fake.created_pages == [("Pages", {"parent_page_id": "parent"})]
@@ -699,6 +702,7 @@ def test_home_dashboard_rebuild_inserts_replacement_before_pages_container() -> 
     fake = FakeSchoolClient()
     page_titles = [
         "Today",
+        "Due & Late",
         "Calendar",
         "School",
         "Work",
@@ -756,6 +760,7 @@ def test_home_dashboard_rebuild_recovers_when_marker_text_is_missing() -> None:
     fake = FakeSchoolClient()
     page_titles = [
         "Today",
+        "Due & Late",
         "Calendar",
         "School",
         "Work",
@@ -1385,6 +1390,129 @@ def test_focus_dashboard_is_phone_first_and_links_exact_task_rows() -> None:
     assert "17 other task(s)" in blocks[-1]["paragraph"]["rich_text"][0]["text"]["content"]
     assert fake.archived_blocks == []
     assert fake.updated_page_icons == [("today-page", "🎯")]
+
+
+def test_due_dashboard_lists_today_then_recent_overdue_and_excludes_inactive() -> None:
+    fake = FakeSchoolClient()
+    fake.children = [
+        {
+            "id": "due-page",
+            "type": "child_page",
+            "child_page": {"title": "Due & Late"},
+        },
+        {
+            "id": "master-db",
+            "type": "child_database",
+            "child_database": {"title": "All Tasks"},
+        },
+    ]
+    fake.children_by_page["due-page"] = [
+        {"id": "old-due-block", "type": "paragraph", "paragraph": {}}
+    ]
+
+    def task_page(
+        page_id: str,
+        name: str,
+        due: str,
+        *,
+        area: str = "School",
+        status: str = "To do",
+        done: bool = False,
+        archived: bool = False,
+        locked: bool = False,
+    ) -> dict:
+        return {
+            "id": page_id,
+            "url": f"https://notion.test/{page_id}",
+            "properties": {
+                "Task": text_prop("title", name),
+                "Area": select_prop(area),
+                "Status": select_prop(status),
+                "Done": {"type": "checkbox", "checkbox": done},
+                "Archived": {"type": "checkbox", "checkbox": archived},
+                "Locked": {"type": "checkbox", "checkbox": locked},
+                "Due": date_prop(due),
+                "Course": text_prop("rich_text", "AP Physics"),
+                "Next step": text_prop("rich_text", f"Start {name}."),
+            },
+        }
+
+    fake.database_pages["master-db"] = [
+        task_page(
+            "today-task",
+            "Lab due tonight",
+            "2026-10-02T23:59:00-07:00",
+        ),
+        task_page("older-task", "Older late task", "2026-09-28T23:59:00-07:00"),
+        task_page("newer-task", "Newer late task", "2026-10-01T23:59:00-07:00"),
+        task_page("future-task", "Future task", "2026-10-03T23:59:00-07:00"),
+        task_page(
+            "done-task",
+            "Completed task",
+            "2026-10-01T23:59:00-07:00",
+            done=True,
+        ),
+        task_page(
+            "submitted-task",
+            "Submitted task",
+            "2026-10-01T23:59:00-07:00",
+            status="Submitted",
+        ),
+        task_page(
+            "work-task",
+            "Work task",
+            "2026-10-01T23:59:00-07:00",
+            area="Work",
+        ),
+    ]
+    board = NotionSchoolBoard("", "parent", "school", client=fake)
+
+    result = board.sync_due_dashboard(
+        date(2026, 10, 2),
+        timezone_name="America/Los_Angeles",
+        full_tasks_url="https://notion.test/all-tasks",
+    )
+
+    assert result.page_id == "due-page"
+    assert result.page_created is False
+    assert result.due_today == 1
+    assert result.overdue == 2
+    assert result.blocks_written == 7
+    assert fake.archived_blocks == ["old-due-block"]
+    assert fake.updated_page_icons == [("due-page", "📅")]
+    blocks = fake.appended_blocks[0][1]
+    assert [block["type"] for block in blocks] == [
+        "paragraph",
+        "heading_2",
+        "callout",
+        "heading_2",
+        "callout",
+        "callout",
+        "paragraph",
+    ]
+    assert blocks[2]["callout"]["color"] == "yellow_background"
+    assert blocks[2]["callout"]["rich_text"][0]["text"] == {
+        "content": "Lab due tonight",
+        "link": {"url": "https://notion.test/today-task"},
+    }
+    assert "Due today · 11:59 PM" in blocks[2]["callout"]["rich_text"][1][
+        "text"
+    ]["content"]
+    assert blocks[4]["callout"]["color"] == "red_background"
+    overdue_names = [
+        blocks[index]["callout"]["rich_text"][0]["text"]["content"]
+        for index in (4, 5)
+    ]
+    assert overdue_names == ["Newer late task", "Older late task"]
+    visible_text = " ".join(
+        item["text"]["content"]
+        for block in blocks
+        for item in block[block["type"]].get("rich_text", [])
+    )
+    assert "Future task" not in visible_text
+    assert "Completed task" not in visible_text
+    assert "Submitted task" not in visible_text
+    assert "Work task" not in visible_text
 
 
 def test_focus_task_callouts_have_distinct_rank_colors() -> None:

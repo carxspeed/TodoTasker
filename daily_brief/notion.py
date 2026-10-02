@@ -6,10 +6,11 @@ import re
 import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, time
 from typing import Any, Iterable
 from urllib.parse import unquote
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from .http import HttpClient, HttpFailure
 from .models import DailyNotification, NotionWorkItem, NotificationTask
@@ -28,6 +29,7 @@ SCHOOL_PRIORITIES = ["MUST", "SMART", "MAY", "Later", "Verify"]
 SCHOOL_KINDS = ["assignment", "quiz", "discussion_topic", "sub_assignment"]
 DAILY_PLAN_TITLE = "Today's Focus"
 FOCUS_DASHBOARD_TITLE = "Today"
+DUE_DASHBOARD_TITLE = "Due & Late"
 PERSISTENT_TODAY_REMINDER = "Check Differential Equations."
 NAVIGATION_PAGE_TITLE = "Pages"
 HOME_DASHBOARD_MARKER = "Today first. Everything else when you need it."
@@ -141,6 +143,16 @@ class FocusDashboardSyncResult:
     page_id: str
     url: str
     page_created: bool = False
+    blocks_written: int = 0
+
+
+@dataclass
+class DueDashboardSyncResult:
+    page_id: str
+    url: str
+    page_created: bool = False
+    due_today: int = 0
+    overdue: int = 0
     blocks_written: int = 0
 
 
@@ -727,6 +739,7 @@ def home_dashboard_blocks(
     """Build a compact home preview with one action and lightweight navigation."""
     required = {
         "Today",
+        "Due & Late",
         "Calendar",
         "All Tasks",
         "School",
@@ -915,7 +928,7 @@ def home_dashboard_blocks(
         },
         {"object": "block", "type": "divider", "divider": {}},
         heading("Plan"),
-        linked_line(("Calendar", "All Tasks")),
+        linked_line(("Calendar", "Due & Late", "All Tasks")),
         heading("Areas"),
         linked_line(("School", "Work", "Communications", "Misc")),
         {"object": "block", "type": "divider", "divider": {}},
@@ -2226,6 +2239,247 @@ class NotionSchoolBoard:
             blocks_written=len(blocks),
         )
 
+    @staticmethod
+    def _local_due_datetime(value: str, timezone_name: str) -> datetime | None:
+        if not value:
+            return None
+        zone = ZoneInfo(timezone_name)
+        try:
+            if len(value) == 10:
+                return datetime.combine(
+                    date.fromisoformat(value), time(23, 59), tzinfo=zone
+                )
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=zone)
+        return parsed.astimezone(zone)
+
+    @staticmethod
+    def _due_dashboard_task_block(
+        page: dict[str, Any],
+        due_at: datetime,
+        *,
+        overdue: bool,
+    ) -> dict[str, Any]:
+        name = _bounded(_property_title(page, "Task"), 300)
+        course = _bounded(_property_rich_text(page, "Course"), 80)
+        next_step = _bounded(
+            clean_notion_next_step(_property_rich_text(page, "Next step"))
+            or "Open the assignment and complete its first unfinished step.",
+            300,
+        )
+        due_time = due_at.strftime("%I:%M %p").lstrip("0")
+        if overdue:
+            due_label = (
+                f"Late · {due_at.strftime('%a %b')} {due_at.day} · {due_time}"
+            )
+        else:
+            due_label = f"Due today · {due_time}"
+        metadata = " · ".join(
+            value
+            for value in (
+                course,
+                due_label,
+                "Locked" if _property_checkbox(page, "Locked") else "",
+            )
+            if value
+        )
+        page_url = str(page.get("url") or "")
+        return {
+            "object": "block",
+            "type": "callout",
+            "callout": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": name,
+                            "link": {"url": page_url} if page_url else None,
+                        },
+                        "annotations": {"bold": True},
+                    },
+                    {
+                        "type": "text",
+                        "text": {"content": f"\n{metadata}"},
+                    },
+                    {
+                        "type": "text",
+                        "text": {"content": f"\n{next_step}"},
+                    },
+                ],
+                "icon": {
+                    "type": "emoji",
+                    "emoji": "⚠️" if overdue else "🕚",
+                },
+                "color": "red_background" if overdue else "yellow_background",
+            },
+        }
+
+    def sync_due_dashboard(
+        self,
+        target_date: date,
+        *,
+        timezone_name: str,
+        full_tasks_url: str = "",
+    ) -> DueDashboardSyncResult:
+        """Refresh a phone-friendly page of active school work due today or late."""
+        navigation_parent_id, navigation_children = (
+            self._navigation_parent_and_children()
+        )
+        page_id = self._child_pages(navigation_children).get(DUE_DASHBOARD_TITLE)
+        created = False
+        if page_id:
+            page = self.client.retrieve_page(page_id)
+        else:
+            page = self.client.create_child_page(
+                DUE_DASHBOARD_TITLE,
+                parent_page_id=navigation_parent_id,
+                icon="📅",
+            )
+            page_id = str(page.get("id") or "")
+            if not page_id:
+                raise NotionError("Notion did not return the Due & Late page id")
+            created = True
+        self.client.update_page_icon(page_id, "📅")
+
+        for child in self.client.list_block_children(page_id):
+            block_id = str(child.get("id") or "")
+            if block_id:
+                self.client.archive_block(block_id)
+
+        database_id = self._master_task_database()
+        if not database_id:
+            raise NotionError("master All Tasks database does not exist")
+        if not full_tasks_url:
+            full_tasks_url = f"https://www.notion.so/{database_id.replace('-', '')}"
+
+        due_today: list[tuple[datetime, dict[str, Any]]] = []
+        overdue: list[tuple[datetime, dict[str, Any]]] = []
+        for task_page in self.client.query_database_pages(database_id):
+            status = _property_select(task_page, "Status") or (
+                "Done" if _property_checkbox(task_page, "Done") else "To do"
+            )
+            if (
+                _property_select(task_page, "Area") != "School"
+                or _property_checkbox(task_page, "Archived")
+                or _property_checkbox(task_page, "Done")
+                or status in NON_ACTIONABLE_STATUSES
+            ):
+                continue
+            due_at = self._local_due_datetime(
+                _property_date_start(task_page, "Due"), timezone_name
+            )
+            if due_at is None or due_at.date() > target_date:
+                continue
+            destination = due_today if due_at.date() == target_date else overdue
+            destination.append((due_at, task_page))
+
+        due_today.sort(key=lambda item: item[0])
+        overdue.sort(key=lambda item: item[0], reverse=True)
+
+        def heading(label: str, count: int) -> dict[str, Any]:
+            return {
+                "object": "block",
+                "type": "heading_2",
+                "heading_2": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {"content": f"{label} · {count}"},
+                            "annotations": {"bold": True},
+                        }
+                    ],
+                    "is_toggleable": False,
+                    "color": "default",
+                },
+            }
+
+        def empty_line(content: str) -> dict[str, Any]:
+            return {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {"content": content},
+                            "annotations": {"color": "gray"},
+                        }
+                    ]
+                },
+            }
+
+        blocks: list[dict[str, Any]] = [
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": (
+                                    f"{target_date.strftime('%A, %B')} "
+                                    f"{target_date.day} · Active school assignments "
+                                    "due today or already late."
+                                )
+                            },
+                            "annotations": {"color": "gray"},
+                        }
+                    ]
+                },
+            },
+            heading("Due today", len(due_today)),
+        ]
+        if due_today:
+            blocks.extend(
+                self._due_dashboard_task_block(task_page, due_at, overdue=False)
+                for due_at, task_page in due_today
+            )
+        else:
+            blocks.append(empty_line("Nothing is due today."))
+        blocks.append(heading("Overdue", len(overdue)))
+        if overdue:
+            blocks.extend(
+                self._due_dashboard_task_block(task_page, due_at, overdue=True)
+                for due_at, task_page in overdue
+            )
+        else:
+            blocks.append(empty_line("Nothing is overdue."))
+        blocks.append(
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": "Open All Tasks for status and progress notes.",
+                                "link": {"url": full_tasks_url},
+                            },
+                            "annotations": {"bold": True},
+                        }
+                    ]
+                },
+            }
+        )
+        for offset in range(0, len(blocks), 100):
+            self.client.append_block_children(page_id, blocks[offset : offset + 100])
+        return DueDashboardSyncResult(
+            page_id=page_id,
+            url=str(
+                page.get("url")
+                or f"https://www.notion.so/{page_id.replace('-', '')}"
+            ),
+            page_created=created,
+            due_today=len(due_today),
+            overdue=len(overdue),
+            blocks_written=len(blocks),
+        )
+
     def master_tasks_enabled(self) -> bool:
         """Return whether the safe migration has created the master database."""
         return self._master_task_database() is not None
@@ -2446,8 +2700,21 @@ class NotionSchoolBoard:
             **self._child_pages(navigation_children),
         }
         all_pages.pop(NAVIGATION_PAGE_TITLE, None)
+        due_page_created = False
+        if DUE_DASHBOARD_TITLE not in all_pages:
+            due_page = self.client.create_child_page(
+                DUE_DASHBOARD_TITLE,
+                parent_page_id=navigation_page_id or self.parent_page_id,
+                icon="📅",
+            )
+            due_page_id = str(due_page.get("id") or "")
+            if not due_page_id:
+                raise NotionError("Notion did not return the Due & Late page id")
+            all_pages[DUE_DASHBOARD_TITLE] = due_page_id
+            due_page_created = True
         required_pages = {
             "Today",
+            DUE_DASHBOARD_TITLE,
             "Calendar",
             "School",
             "Work",
@@ -2496,6 +2763,7 @@ class NotionSchoolBoard:
         moved_pages: list[str] = []
         for title in (
             "Today",
+            DUE_DASHBOARD_TITLE,
             "Calendar",
             "School",
             "Work",
@@ -2504,7 +2772,14 @@ class NotionSchoolBoard:
             "Completed",
         ):
             page_id = all_pages[title]
-            self.client.update_page_icon(page_id, None)
+            icon = (
+                "🎯"
+                if title == "Today"
+                else "📅"
+                if title == DUE_DASHBOARD_TITLE
+                else None
+            )
+            self.client.update_page_icon(page_id, icon)
             if title in root_pages:
                 self.client.move_page(page_id, navigation_page_id)
                 moved_pages.append(title)
@@ -2523,6 +2798,7 @@ class NotionSchoolBoard:
             "dashboard_created": not dashboard_exists,
             "navigation_created": navigation_created,
             "navigation_page_id": navigation_page_id,
+            "due_page_created": due_page_created,
             "moved_pages": tuple(moved_pages),
             "database_moved": database_was_root,
         }
@@ -2541,8 +2817,19 @@ class NotionSchoolBoard:
 
         navigation_children = self.client.list_block_children(navigation_page_id)
         pages = self._child_pages(navigation_children)
+        if DUE_DASHBOARD_TITLE not in pages:
+            due_page = self.client.create_child_page(
+                DUE_DASHBOARD_TITLE,
+                parent_page_id=navigation_page_id,
+                icon="📅",
+            )
+            due_page_id = str(due_page.get("id") or "")
+            if not due_page_id:
+                raise NotionError("Notion did not return the Due & Late page id")
+            pages[DUE_DASHBOARD_TITLE] = due_page_id
         required_pages = {
             "Today",
+            DUE_DASHBOARD_TITLE,
             "Calendar",
             "School",
             "Work",
@@ -2608,8 +2895,15 @@ class NotionSchoolBoard:
             if block_id:
                 self.client.archive_block(block_id)
                 archived += 1
-        for page_id in pages.values():
-            self.client.update_page_icon(page_id, None)
+        for title, page_id in pages.items():
+            icon = (
+                "🎯"
+                if title == "Today"
+                else "📅"
+                if title == DUE_DASHBOARD_TITLE
+                else None
+            )
+            self.client.update_page_icon(page_id, icon)
         self.client.update_page_icon(navigation_page_id, None)
         self.client.update_page_icon(self.parent_page_id, None)
         return {

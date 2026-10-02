@@ -957,13 +957,19 @@ class DailyBriefOrchestrator:
                         master_result.task_urls,
                         aliases=focus_aliases,
                     )
+                    full_tasks_url = (
+                        master_result.view_urls.get("All tasks")
+                        or "https://www.notion.so/"
+                        + master_result.database_id.replace("-", "")
+                    )
+                    self.notion_delivery.sync_due_dashboard(
+                        target_date,
+                        timezone_name=self.settings.timezone,
+                        full_tasks_url=full_tasks_url,
+                    )
                     plan_result = self.notion_delivery.sync_focus_dashboard(
                         notification,
-                        full_tasks_url=(
-                            master_result.view_urls.get("All tasks")
-                            or "https://www.notion.so/"
-                            + master_result.database_id.replace("-", "")
-                        ),
+                        full_tasks_url=full_tasks_url,
                     )
                     self.notion_delivery.sync_home_dashboard(notification)
                     notion_result = master_result

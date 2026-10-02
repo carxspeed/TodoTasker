@@ -94,6 +94,7 @@ class MasterNotionDelivery(NotionDelivery):
         self.master_items = []
         self.master_sync_calls = 0
         self.master_focus_calls = 0
+        self.due_dashboard_calls = 0
         self.focus_dashboard_calls = 0
         self.home_dashboard_calls = 0
         self.task_urls = {}
@@ -137,6 +138,10 @@ class MasterNotionDelivery(NotionDelivery):
     def sync_focus_dashboard(self, *args, **kwargs):
         self.focus_dashboard_calls += 1
         return SchoolSyncResult("today", "https://notion.test/today")
+
+    def sync_due_dashboard(self, *args, **kwargs):
+        self.due_dashboard_calls += 1
+        return SchoolSyncResult("due", "https://notion.test/due")
 
     def sync_home_dashboard(self, *args, **kwargs):
         self.home_dashboard_calls += 1
@@ -555,6 +560,7 @@ def test_master_layout_is_the_source_of_truth_and_routes_delivery_without_duplic
     assert status == "sent"
     assert notion.master_sync_calls == 1
     assert notion.master_focus_calls == 1
+    assert notion.due_dashboard_calls == 1
     assert notion.focus_dashboard_calls == 1
     assert notion.home_dashboard_calls == 1
     assert notion.calls == 0
