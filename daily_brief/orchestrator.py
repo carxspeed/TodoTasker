@@ -27,6 +27,7 @@ from .canvas import (
 from .classifier import classify
 from .config import Settings
 from .guidance import generate_guidance, generate_guidance_outcome
+from .imessage import InkboxIMessageClient, render_imessage
 from .models import (
     CalendarSnapshot,
     CanvasEnvelope,
@@ -239,6 +240,7 @@ class DailyBriefOrchestrator:
         guidance_call: Callable[..., GuidanceResult | None] = generate_guidance,
         notion_delivery: NotionSchoolBoard | None = None,
         telegram: TelegramClient | None = None,
+        imessage: InkboxIMessageClient | None = None,
     ) -> None:
         self.settings = settings
         self.state_dir = Path(state_dir)
@@ -249,6 +251,7 @@ class DailyBriefOrchestrator:
         self.guidance_call = guidance_call
         self.notion_delivery = notion_delivery
         self.telegram = telegram
+        self.imessage = imessage
 
     def _request_guidance(
         self,
@@ -853,7 +856,7 @@ class DailyBriefOrchestrator:
         if state.last_delivered and now - state.last_delivered > timedelta(hours=36):
             warnings.insert(
                 0,
-                f"No brief has reached you since {state.last_delivered.date().isoformat()} — Telegram delivery may be broken.",
+                f"No brief has reached you since {state.last_delivered.date().isoformat()} — notification delivery may be broken.",
             )
         warnings.extend(value.text for value in state.warnings)
         text = render_brief(
@@ -1001,52 +1004,106 @@ class DailyBriefOrchestrator:
             task_urls,
             aliases=focus_aliases,
         )
-        summary = render_notification(notification)
-        payload_hash = normalized_hash(
-            {
-                "text": summary.text,
-                "notion_url": notion_url,
-                "primary_url": notification.primary.url if notification.primary else None,
-            }
-        )
-        status = "failed"
-        success = False
-        uncertain = False
-        if self.telegram is not None:
-            if delivery.telegram_message_id and delivery.telegram_payload_hash == payload_hash:
-                status = "skipped"
-                success = True
-            elif delivery.telegram_message_id:
+        def deliver_telegram() -> tuple[str, bool, bool]:
+            summary = render_notification(notification)
+            payload_hash = normalized_hash(
+                {
+                    "text": summary.text,
+                    "notion_url": notion_url,
+                    "primary_url": (
+                        notification.primary.url if notification.primary else None
+                    ),
+                }
+            )
+            if self.telegram is None:
+                return "failed", False, False
+            if (
+                delivery.telegram_message_id
+                and delivery.telegram_payload_hash == payload_hash
+            ):
+                return "skipped", True, False
+            if delivery.telegram_message_id:
                 _, result = self.telegram.edit_notification(
                     delivery.telegram_message_id,
                     notification,
                     notion_url,
                 )
-                status = "edited" if result.success else "failed"
-                success = result.success
-                uncertain = result.uncertain
+                channel_status = "edited" if result.success else "failed"
             else:
                 _, result = self.telegram.send_notification(notification, notion_url)
-                status = "sent" if result.success else "failed"
-                success = result.success
-                uncertain = result.uncertain
-            if success:
-                if status != "skipped" and result.message_id is not None:
+                channel_status = "sent" if result.success else "failed"
+            if result.success:
+                if result.message_id is not None:
                     delivery.telegram_message_id = result.message_id
                 delivery.telegram_payload_hash = payload_hash
+            return channel_status, result.success, result.uncertain
+
+        def deliver_imessage() -> tuple[str, bool, bool]:
+            summary = render_imessage(notification, notion_url)
+            payload_hash = normalized_hash({"text": summary.text})
+            if delivery.imessage_message_id:
+                # iMessage cannot be edited. One accepted morning message is enough;
+                # later reruns update Notion without creating phone duplicates.
+                return "skipped", True, False
+            if self.imessage is None:
+                return "failed", False, False
+            idempotency_key = (
+                delivery.imessage_idempotency_key
+                or f"todotasker-daily-{target_date.isoformat()}"
+            )
+            if delivery.imessage_idempotency_key is None:
+                delivery.imessage_idempotency_key = idempotency_key
+                delivery.imessage_payload_hash = payload_hash
+                delivery.imessage_payload_text = summary.text
+            payload_text = delivery.imessage_payload_text or summary.text
+            result = self.imessage.send_text(
+                payload_text,
+                idempotency_key=idempotency_key,
+            )
+            if result.success:
+                delivery.imessage_message_id = result.message_id
+                delivery.imessage_conversation_id = result.conversation_id
+                return "sent", True, False
+            return "failed", False, result.uncertain
+
+        status = "failed"
+        success = False
+        uncertain = False
+        delivery_log = "none"
+        if self.settings.delivery_channel == "telegram":
+            status, success, uncertain = deliver_telegram()
+            delivery_log = f"telegram:{status}"
+        else:
+            imessage_status, success, uncertain = deliver_imessage()
+            status = imessage_status
+            delivery_log = f"imessage:{imessage_status}"
+            if (
+                not success
+                and not uncertain
+                and self.settings.delivery_channel
+                == "imessage_with_telegram_fallback"
+            ):
+                telegram_status, success, uncertain = deliver_telegram()
+                delivery_log += f",telegram:{telegram_status}"
+                status = (
+                    f"fallback-{telegram_status}" if success else telegram_status
+                )
         if success:
             state.last_delivered = now
             state.consecutive_telegram_failures = 0
+            state.consecutive_delivery_failures = 0
             state.warnings = []
         elif uncertain:
             status = "uncertain"
         else:
-            state.consecutive_telegram_failures += 1
-            if state.consecutive_telegram_failures >= 2:
+            state.consecutive_delivery_failures += 1
+            if self.settings.delivery_channel == "telegram":
+                state.consecutive_telegram_failures += 1
+            if state.consecutive_delivery_failures >= 2:
                 directory = resolve_incident_dir(self.settings.incident_dir)
                 alert_incident(
                     directory,
-                    f"Daily Brief Telegram delivery failed for {target_date.isoformat()}.",
+                    f"Daily Brief notification delivery failed for {target_date.isoformat()}.",
                 )
         self.state_store.save(state)
         log_path = self.state_dir / "runs.log"
@@ -1058,7 +1115,9 @@ class DailyBriefOrchestrator:
             f"guidance={'prepared:' if unchanged else ''}{guidance_diagnostics.source} "
             f"guidance_model={guidance_diagnostics.model or 'none'} "
             f"guidance_error={guidance_diagnostics.failure_code or 'none'} "
-            f"telegram={status} diff={'unchanged' if unchanged else 'changed'} "
+            f"delivery={delivery_log} "
+            f"telegram={status if self.settings.delivery_channel == 'telegram' else 'not-primary'} "
+            f"diff={'unchanged' if unchanged else 'changed'} "
             f"canvas_error={bundle.errors.get('canvas', 'none')} "
             f"diagnostics={','.join(value.split()[0] for value in bundle.diagnostics) or 'none'}\n"
         )
@@ -1068,12 +1127,16 @@ class DailyBriefOrchestrator:
     def watchdog(self, target_date: date) -> bool:
         state, _ = self.state_store.load()
         delivery = state.deliveries.get(target_date.isoformat())
-        healthy = bool(delivery and delivery.telegram_message_id and state.last_delivered)
+        healthy = bool(
+            delivery
+            and (delivery.imessage_message_id or delivery.telegram_message_id)
+            and state.last_delivered
+        )
         if healthy:
             return False
         directory = resolve_incident_dir(self.settings.incident_dir)
         alert_incident(
             directory,
-            f"No Telegram Daily Brief delivery is recorded for {target_date.isoformat()}.",
+            f"No Daily Brief notification delivery is recorded for {target_date.isoformat()}.",
         )
         return True

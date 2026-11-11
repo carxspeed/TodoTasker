@@ -58,6 +58,11 @@ class Settings(BaseModel):
     notion_misc_db_id: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    inkbox_api_key: str = ""
+    inkbox_conversation_id: str = ""
+    delivery_channel: Literal[
+        "telegram", "imessage", "imessage_with_telegram_fallback"
+    ] = "telegram"
     ical_url: str = ""
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
@@ -240,6 +245,9 @@ def load_settings(
         "notion_misc_db_id": values.get("NOTION_MISC_DB_ID", ""),
         "telegram_bot_token": values.get("TELEGRAM_BOT_TOKEN", ""),
         "telegram_chat_id": values.get("TELEGRAM_CHAT_ID", ""),
+        "inkbox_api_key": values.get("INKBOX_API_KEY", ""),
+        "inkbox_conversation_id": values.get("INKBOX_CONVERSATION_ID", ""),
+        "delivery_channel": values.get("DELIVERY_CHANNEL", "telegram"),
         "ical_url": values.get("ICAL_URL", ""),
         "anthropic_api_key": values.get("ANTHROPIC_API_KEY", ""),
         "anthropic_model": values.get("ANTHROPIC_MODEL", "claude-sonnet-5"),

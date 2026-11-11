@@ -14,6 +14,7 @@ def test_late_wake_still_delivers_the_current_day() -> None:
 def test_delivery_failure_requests_a_scheduler_retry() -> None:
     assert _delivery_exit_code("sent") == 0
     assert _delivery_exit_code("skipped") == 0
+    assert _delivery_exit_code("fallback-sent") == 0
     assert _delivery_exit_code("uncertain") == 75
     assert _delivery_exit_code("failed") == 1
 

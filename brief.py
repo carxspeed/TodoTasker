@@ -10,6 +10,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from daily_brief.config import ConfigurationError, load_settings
+from daily_brief.imessage import InkboxIMessageClient, render_imessage_preview
 from daily_brief.models import PreparedArtifact
 from daily_brief.notion import NotionSchoolBoard, summarize_master_migration
 from daily_brief.orchestrator import DailyBriefOrchestrator, LiveSourceProvider
@@ -27,9 +28,16 @@ def _in_window(now_time: time, start: time, end: time) -> bool:
 
 
 def _delivery_exit_code(status: str) -> int:
-    """Let Task Scheduler retry deliveries that did not reach Telegram."""
+    """Let Task Scheduler retry deliveries that did not reach a phone channel."""
 
-    if status in {"sent", "edited", "skipped"}:
+    if status in {
+        "sent",
+        "edited",
+        "skipped",
+        "fallback-sent",
+        "fallback-edited",
+        "fallback-skipped",
+    }:
         return 0
     if status == "uncertain":
         return DeferredHealthyLock.exit_code
@@ -56,6 +64,14 @@ def parse_args() -> argparse.Namespace:
         command.add_argument("--dry-run", action="store_true")
     watchdog = sub.add_parser("watchdog")
     watchdog.add_argument("--target-date", type=date.fromisoformat)
+    sub.add_parser(
+        "setup-imessage",
+        help="Show the one-time Inkbox connect command and connection state",
+    )
+    sub.add_parser(
+        "test-imessage",
+        help="Send one explicit TodoTasker iMessage connection test",
+    )
     status = sub.add_parser(
         "status",
         help="Show source, AI, and delivery health without exposing private task text",
@@ -215,6 +231,9 @@ def main() -> int:
         elif args.command == "migrate-notion":
             target = explicit or now.date()
             as_of = now
+        elif args.command in {"setup-imessage", "test-imessage"}:
+            target = now.date()
+            as_of = now
         elif args.command == "preview-notification":
             target = explicit or now.date()
             as_of = now
@@ -238,8 +257,17 @@ def main() -> int:
         telegram = None
         if settings.telegram_bot_token and settings.telegram_chat_id:
             telegram = TelegramClient(settings.telegram_bot_token, settings.telegram_chat_id)
+        imessage = None
+        if settings.inkbox_api_key:
+            imessage = InkboxIMessageClient(
+                settings.inkbox_api_key,
+                settings.inkbox_conversation_id,
+            )
         orchestrator = DailyBriefOrchestrator(
-            settings, notion_delivery=notion, telegram=telegram
+            settings,
+            notion_delivery=notion,
+            telegram=telegram,
+            imessage=imessage,
         )
         dry_run = (
             not args.apply
@@ -249,7 +277,41 @@ def main() -> int:
         )
         lock = nullcontext() if dry_run else HeartbeatLock()
         with lock:
-            if args.command == "migrate-notion":
+            if args.command == "setup-imessage":
+                if imessage is None:
+                    raise ConfigurationError(
+                        "INKBOX_API_KEY is not in the secure vault; run "
+                        "manage_secrets.py set INKBOX_API_KEY or manage_secrets.py web-setup"
+                    )
+                setup = imessage.setup_status()
+                print(f"router_number={setup.router_number or 'unavailable'}")
+                print(f"connect_command={setup.connect_command or 'unavailable'}")
+                print(f"conversation_count={len(setup.conversation_ids)}")
+                print(f"connected={str(bool(setup.conversation_ids)).lower()}")
+                if not setup.conversation_ids:
+                    print("next=send the connect command to the router number from Messages")
+                elif len(setup.conversation_ids) > 1:
+                    print("next=set INKBOX_CONVERSATION_ID to the intended conversation")
+                else:
+                    print("next=run brief.py test-imessage")
+            elif args.command == "test-imessage":
+                if imessage is None:
+                    raise ConfigurationError(
+                        "INKBOX_API_KEY is not in the secure vault; run "
+                        "manage_secrets.py set INKBOX_API_KEY or manage_secrets.py web-setup"
+                    )
+                result = imessage.send_text(
+                    "TodoTasker iMessage test. The connection is working.",
+                    idempotency_key=f"todotasker-test-{now.strftime('%Y%m%d%H%M%S')}",
+                )
+                if not result.success:
+                    if result.uncertain:
+                        raise DeferredHealthyLock(
+                            "iMessage test outcome is uncertain; do not resend immediately"
+                        )
+                    raise RuntimeError(result.error or "iMessage test failed")
+                print("imessage_test=sent")
+            elif args.command == "migrate-notion":
                 _run_notion_migration(
                     settings,
                     notion,
@@ -287,6 +349,11 @@ def main() -> int:
                 print("Telegram notification preview")
                 print()
                 print(render_notification_preview(notification))
+                if settings.delivery_channel != "telegram":
+                    print()
+                    print("iMessage notification preview")
+                    print()
+                    print(render_imessage_preview(notification))
                 if notification.primary and notification.primary.url:
                     print()
                     print(f"[Open main task] {notification.primary.url}")

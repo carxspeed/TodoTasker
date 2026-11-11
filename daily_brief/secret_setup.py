@@ -15,6 +15,7 @@ from .secret_vault import SECRET_NAMES, SecretVaultError
 MAX_FORM_BYTES = 64 * 1024
 FIELD_LABELS = {
     "TELEGRAM_BOT_TOKEN": "Telegram bot token",
+    "INKBOX_API_KEY": "Inkbox identity API key (iMessage)",
     "NOTION_TOKEN": "Notion integration secret",
     "ICAL_URL": "Google Calendar secret iCal URL",
     "CANVAS_ACCESS_TOKEN": "Canvas access token (optional)",

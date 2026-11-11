@@ -19,6 +19,7 @@ from daily_brief.notion import MasterTaskSyncResult, SchoolSyncResult
 from daily_brief.orchestrator import DailyBriefOrchestrator, LiveSourceProvider
 from daily_brief.orchestrator import _assessment_focus_aliases
 from daily_brief.state import StateStore
+from daily_brief.imessage import IMessageResult
 from daily_brief.telegram import TelegramResult, render_notification
 
 
@@ -173,8 +174,36 @@ class UncertainTelegram(Telegram):
         )
 
 
-def make_orchestrator(tmp_path: Path, guidance=None, notion=None, telegram=None):
-    settings = load_settings(tmp_path / "missing.env")
+class IMessage:
+    def __init__(self, *, success=True, uncertain=False):
+        self.sent = 0
+        self.success = success
+        self.uncertain = uncertain
+        self.texts = []
+
+    def send_text(self, text, *, idempotency_key):
+        self.sent += 1
+        self.texts.append(text)
+        return IMessageResult(
+            self.success,
+            message_id="imessage-44" if self.success else None,
+            conversation_id="conversation-1",
+            error=None if self.success else "INKBOX_TRANSPORT_FAILED",
+            uncertain=self.uncertain,
+        )
+
+
+def make_orchestrator(
+    tmp_path: Path,
+    guidance=None,
+    notion=None,
+    telegram=None,
+    imessage=None,
+    delivery_channel="telegram",
+):
+    settings = load_settings(tmp_path / "missing.env").model_copy(
+        update={"delivery_channel": delivery_channel}
+    )
     store = StateStore(tmp_path / "state")
     store.save(DailyBriefState())
     return DailyBriefOrchestrator(
@@ -184,6 +213,7 @@ def make_orchestrator(tmp_path: Path, guidance=None, notion=None, telegram=None)
         guidance_call=guidance or Guidance(),
         notion_delivery=notion,
         telegram=telegram,
+        imessage=imessage,
     )
 
 
@@ -595,6 +625,122 @@ def test_delivery_reuses_prepared_guidance_and_same_payload_skips(tmp_path: Path
     assert telegram.sent == 1 and telegram.edited == 0
     assert first_text == second_text
     assert state.last_delivered is not None
+
+
+def test_imessage_is_primary_and_reruns_do_not_duplicate_phone_messages(
+    tmp_path: Path,
+) -> None:
+    imessage = IMessage()
+    telegram = Telegram()
+    orchestrator = make_orchestrator(
+        tmp_path,
+        Guidance(),
+        NotionDelivery(),
+        telegram,
+        imessage,
+        "imessage_with_telegram_fallback",
+    )
+    provider = Provider()
+
+    _, first_status, _ = orchestrator.deliver(
+        provider,
+        target_date=TARGET,
+        as_of=datetime(2026, 9, 2, 7, 0, tzinfo=TZ),
+    )
+    _, second_status, state = orchestrator.deliver(
+        provider,
+        target_date=TARGET,
+        as_of=datetime(2026, 9, 2, 7, 5, tzinfo=TZ),
+    )
+
+    assert first_status == "sent"
+    assert second_status == "skipped"
+    assert imessage.sent == 1
+    assert telegram.sent == 0
+    delivery = state.deliveries[TARGET.isoformat()]
+    assert delivery.imessage_message_id == "imessage-44"
+    assert delivery.imessage_idempotency_key == "todotasker-daily-2026-09-02"
+    assert orchestrator.watchdog(TARGET) is False
+
+
+def test_definite_imessage_failure_uses_telegram_fallback(tmp_path: Path) -> None:
+    imessage = IMessage(success=False, uncertain=False)
+    telegram = Telegram()
+    orchestrator = make_orchestrator(
+        tmp_path,
+        Guidance(),
+        None,
+        telegram,
+        imessage,
+        "imessage_with_telegram_fallback",
+    )
+
+    _, status, state = orchestrator.deliver(
+        Provider(),
+        target_date=TARGET,
+        as_of=datetime(2026, 9, 2, 7, 0, tzinfo=TZ),
+    )
+
+    assert status == "fallback-sent"
+    assert imessage.sent == 1
+    assert telegram.sent == 1
+    assert state.consecutive_delivery_failures == 0
+
+
+def test_uncertain_imessage_result_does_not_risk_a_duplicate_telegram(
+    tmp_path: Path,
+) -> None:
+    imessage = IMessage(success=False, uncertain=True)
+    telegram = Telegram()
+    orchestrator = make_orchestrator(
+        tmp_path,
+        Guidance(),
+        None,
+        telegram,
+        imessage,
+        "imessage_with_telegram_fallback",
+    )
+
+    _, status, state = orchestrator.deliver(
+        Provider(),
+        target_date=TARGET,
+        as_of=datetime(2026, 9, 2, 7, 0, tzinfo=TZ),
+    )
+
+    assert status == "uncertain"
+    assert imessage.sent == 1
+    assert telegram.sent == 0
+    assert state.consecutive_delivery_failures == 0
+
+
+def test_uncertain_imessage_retry_reuses_the_exact_original_payload(
+    tmp_path: Path,
+) -> None:
+    imessage = IMessage(success=False, uncertain=True)
+    orchestrator = make_orchestrator(
+        tmp_path,
+        Guidance(),
+        None,
+        Telegram(),
+        imessage,
+        "imessage_with_telegram_fallback",
+    )
+    provider = Provider()
+    orchestrator.deliver(
+        provider,
+        target_date=TARGET,
+        as_of=datetime(2026, 9, 2, 7, 0, tzinfo=TZ),
+    )
+    provider.canvas.assignments[0].name = "A changed title after the timeout"
+
+    orchestrator.deliver(
+        provider,
+        target_date=TARGET,
+        as_of=datetime(2026, 9, 2, 7, 5, tzinfo=TZ),
+    )
+
+    assert imessage.sent == 2
+    assert imessage.texts[0] == imessage.texts[1]
 
 
 def test_changed_deadline_gets_updated_header_and_fresh_guidance_call(tmp_path: Path) -> None:

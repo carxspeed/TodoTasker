@@ -87,6 +87,7 @@ def test_unknown_secret_names_are_rejected(tmp_path: Path) -> None:
         store.set("UNSUPPORTED_SECRET", "do-not-store-this")
 
     assert "MICROSOFT_PASSWORD" in SECRET_NAMES
+    assert "INKBOX_API_KEY" in SECRET_NAMES
 
 
 def test_microsoft_credentials_are_encrypted_like_other_secrets(tmp_path: Path) -> None:

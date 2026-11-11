@@ -5,7 +5,7 @@ Daily Brief is a local-first Windows tasker that combines:
 - assignments collected from Canvas;
 - one unified Notion Tasks database with phone-friendly Work, School, Connections, Misc, and Today views;
 - events from a Google Calendar iCalendar feed;
-- an evening check-in and morning brief delivered through Telegram.
+- an evening check-in through Telegram and a morning brief delivered through iMessage or Telegram.
 
 Python handles collection, classification, rendering, delivery, retries, and recovery. Ollama handles the private evening-note extraction locally. The system stores its runtime state on your computer and is designed to avoid duplicate pages or messages when a command is retried.
 
@@ -18,7 +18,8 @@ Install or create the following before starting:
 - Windows 11 and PowerShell;
 - [Git for Windows](https://git-scm.com/download/win);
 - Python 3.11 or newer;
-- a Telegram account;
+- a Telegram account for check-ins and delivery fallback;
+- an optional [Inkbox](https://inkbox.ai/console) account for iMessage delivery;
 - a Notion account with permission to create an internal integration;
 - a Google Calendar whose secret iCal address you can access;
 - access to the Canvas site configured for this project;
@@ -89,6 +90,7 @@ the Windows user-scoped encrypted vault instead:
 
 ```powershell
 venv\Scripts\python.exe manage_secrets.py set TELEGRAM_BOT_TOKEN
+venv\Scripts\python.exe manage_secrets.py set INKBOX_API_KEY
 venv\Scripts\python.exe manage_secrets.py set NOTION_TOKEN
 venv\Scripts\python.exe manage_secrets.py set ICAL_URL
 ```
@@ -123,6 +125,9 @@ The main settings are:
 | `NOTION_MISC_DB_ID` | Misc database ID, created automatically | Later |
 | `TELEGRAM_BOT_TOKEN` | Token issued by BotFather; store in the encrypted vault | Yes |
 | `TELEGRAM_CHAT_ID` | Your numeric Telegram conversation ID | Created automatically |
+| `INKBOX_API_KEY` | Identity-scoped Inkbox key for iMessage; store in the encrypted vault | For iMessage |
+| `INKBOX_CONVERSATION_ID` | Conversation to use when the identity has more than one connection | Usually automatic |
+| `DELIVERY_CHANNEL` | `telegram`, `imessage`, or `imessage_with_telegram_fallback` | Yes |
 | `ICAL_URL` | Google Calendar secret iCal URL; store in the encrypted vault | Yes |
 | `CANVAS_BASE` | Canvas base URL, without a trailing slash | Yes |
 | `MICROSOFT_EMAIL` | School Microsoft email; stored only in the encrypted vault | Yes for unattended Canvas renewal |
@@ -163,6 +168,55 @@ If a bot token is ever exposed, revoke it with BotFather, generate a replacement
 and rerun the `manage_secrets.py set TELEGRAM_BOT_TOKEN` command. The [official
 Telegram bot tutorial](https://core.telegram.org/bots/tutorial) explains token
 creation and bot setup.
+
+### Use iMessage for the morning brief
+
+The recommended mode sends the compact morning focus through iMessage and keeps
+Telegram as a fallback. Telegram still handles the interactive evening check-in.
+TodoTasker sends only the small phone card—up to three task names, their next steps,
+reminders, and Notion links—to Inkbox. It does not send Canvas, Microsoft, Notion,
+Telegram, or model credentials.
+
+1. Sign in at the [Inkbox console](https://inkbox.ai/console), create one identity,
+   enable iMessage for it, and create an identity-scoped API key. Inkbox's shared
+   iMessage service is available without buying a dedicated phone number.
+2. Store the key in the Windows encrypted vault. Do not place it in `.env`:
+
+   ```powershell
+   venv\Scripts\python.exe manage_secrets.py set INKBOX_API_KEY
+   ```
+
+   If the hidden terminal prompt is inconvenient, use
+   `venv\Scripts\python.exe manage_secrets.py web-setup` and fill only the Inkbox
+   field.
+3. Set this non-secret preference in `.env`:
+
+   ```dotenv
+   DELIVERY_CHANNEL=imessage_with_telegram_fallback
+   ```
+
+4. Ask TodoTasker for the current shared router and connect command:
+
+   ```powershell
+   venv\Scripts\python.exe brief.py setup-imessage
+   ```
+
+5. In Apple's Messages app, text the exact printed `connect_command` to the printed
+   `router_number`. The human must initiate this shared iMessage conversation once.
+6. Run `setup-imessage` again. When it reports `connected=true`, send one explicit
+   connection test:
+
+   ```powershell
+   venv\Scripts\python.exe brief.py test-imessage
+   ```
+
+If the identity has only one connected conversation, TodoTasker selects it
+automatically. With multiple conversations, put the intended non-secret conversation
+ID in `INKBOX_CONVERSATION_ID`. Each date uses one stable idempotency key. A rerun
+will not create another iMessage, and Telegram is used only after a definite Inkbox
+failure; an uncertain timeout is not duplicated across channels. See Inkbox's
+[official SDK iMessage documentation](https://github.com/inkbox-ai/inkbox/blob/main/sdk/python/README.md#imessage)
+for the shared-service behavior.
 
 ## 6. Create and connect the Notion integration
 
@@ -303,7 +357,7 @@ renewal fails (for example, after a password change or a new Microsoft challenge
 ## 9. Verify each read-only connection
 
 These commands verify security and fetch or summarize data without creating Notion
-pages or sending Telegram messages:
+pages or sending notifications:
 
 ```powershell
 venv\Scripts\python.exe manage_secrets.py audit
@@ -327,9 +381,9 @@ venv\Scripts\python.exe brief.py prepare `
     --dry-run
 ```
 
-`--fixture` avoids live source collection and `--dry-run` prevents state, cache, log, Notion, and Telegram writes.
+`--fixture` avoids live source collection and `--dry-run` prevents state, cache, log, Notion, and notification writes.
 
-Preview the compact phone notification without changing state, Notion, or Telegram:
+Preview the compact phone notification without changing state, Notion, or sending a message:
 
 ```powershell
 venv\Scripts\python.exe brief.py preview-notification
@@ -339,7 +393,7 @@ Add `--fixture fixtures\sample_todo.json` to preview the layout without live Can
 
 ## 11. Run the first live morning cycle
 
-The following commands are intentionally live. `prepare` updates local state. `deliver` synchronizes the canonical Tasks database, refreshes the three-item Today focus, and sends or edits the brief in Telegram.
+The following commands are intentionally live. `prepare` updates local state. `deliver` synchronizes the canonical Tasks database, refreshes the three-item Today focus, and sends it through the configured delivery channel.
 
 ```powershell
 $Today = Get-Date -Format 'yyyy-MM-dd'
@@ -352,10 +406,10 @@ Verify that:
 - a generated Markdown brief exists under `state\briefs`;
 - the School view has one group per Canvas class and its assignments are present;
 - Today contains no more than three focused tasks and is readable on a phone;
-- one morning message arrived in Telegram;
-- the Telegram button opens the compact Today page rather than the full To Do List dashboard.
+- one morning message arrived in the configured channel;
+- the message links open the main task and compact Today page rather than the full To Do List dashboard.
 
-Run the same two commands once more. The system should update matching Tasks rows and reuse the same Telegram message rather than create duplicates or repeat presentation text in `Next step`.
+Run the same two commands once more. The system should update matching Tasks rows without creating a second phone notification or repeating presentation text in `Next step`. Telegram messages can be edited; an already accepted iMessage is left alone while Notion receives the newer data.
 
 Test the evening check-in separately:
 
@@ -444,6 +498,10 @@ venv\Scripts\python.exe canvas.py auth-check
 # See whether Canvas/Notion/Calendar loaded and which AI produced today's plan
 venv\Scripts\python.exe brief.py status
 
+# Check or explicitly test the optional iMessage channel
+venv\Scripts\python.exe brief.py setup-imessage
+venv\Scripts\python.exe brief.py test-imessage
+
 # Create the initial encrypted Canvas session (automatic renewal handles later expiry)
 venv\Scripts\python.exe canvas.py login
 
@@ -473,6 +531,14 @@ challenge; then run `canvas.py login` once to establish a fresh browser session.
 
 Open the bot in Telegram, press **Start**, send a new message, and rerun `setup_telegram.py`. If a webhook is configured on the same bot, remove the conflicting webhook or use a dedicated bot because polling and webhooks cannot consume updates simultaneously.
 
+### iMessage is not connected
+
+Run `venv\Scripts\python.exe brief.py setup-imessage`. If it reports
+`connected=false`, send the displayed connect command from Apple's Messages app to
+the displayed router number, then rerun the command. A 401 means the encrypted
+Inkbox key must be replaced. If several conversations are listed, set
+`INKBOX_CONVERSATION_ID` to the intended one and rerun the explicit test.
+
 ### Telegram token or calendar URL was exposed
 
 Revoke and replace the bot token through BotFather. Reset the secret iCal address in
@@ -496,13 +562,13 @@ Update `OLLAMA_MODEL` if the installed model has a different exact name.
 
 ### No morning delivery
 
-Run `venv\Scripts\python.exe brief.py watchdog`, inspect the command output, and check `state\briefs` first. After two definite Telegram failures or a missing delivery at watchdog time, the app creates `BRIEF-DELIVERY-BROKEN.txt` in `INCIDENT_DIR` or on the Desktop and attempts a Windows notification.
+Run `venv\Scripts\python.exe brief.py watchdog`, inspect the command output, and check `state\briefs` first. After two definite notification failures or a missing delivery at watchdog time, the app creates `BRIEF-DELIVERY-BROKEN.txt` in `INCIDENT_DIR` or on the Desktop and attempts a Windows notification.
 
 ## Recovery, safety, and privacy
 
 - Generated Markdown briefs remain in `state\briefs` even if both remote deliveries fail.
 - A corrupt `state\state.json` can restore from `state\state.json.bak`; if both are unusable, the app rebuilds safe defaults while preserving compatible configuration.
-- Master Tasks rows use stable source IDs and sync hashes so retries do not duplicate assignments; Telegram delivery remains idempotent.
+- Master Tasks rows use stable source IDs and sync hashes so retries do not duplicate assignments; Telegram and iMessage delivery remain idempotent.
 - Check-in events are recorded append-first before downstream mutation.
 - Ambiguous or malformed check-in replies go to local quarantine instead of updating the wrong item.
 - Raw check-in text is not sent to the morning remote-model path.

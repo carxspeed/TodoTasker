@@ -422,6 +422,11 @@ class DeliveryRecord(Contract):
     brief_hash: str | None = None
     telegram_payload_hash: str | None = None
     telegram_message_id: int | None = None
+    imessage_payload_hash: str | None = None
+    imessage_message_id: str | None = None
+    imessage_conversation_id: str | None = None
+    imessage_idempotency_key: str | None = None
+    imessage_payload_text: str | None = None
     notion_page_id: str | None = None
     notion_url: str | None = None
 
@@ -461,6 +466,7 @@ class DailyBriefState(Contract):
     last_delivered: AwareDatetime | None = None
     last_notion_ok: AwareDatetime | None = None
     consecutive_telegram_failures: int = Field(default=0, ge=0)
+    consecutive_delivery_failures: int = Field(default=0, ge=0)
     capacity: Capacity | None = None
     update_id_offset: int | None = Field(default=None, ge=0)
     checkin_sent_for: date | None = None

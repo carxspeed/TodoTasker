@@ -24,6 +24,7 @@ def test_defaults_are_safe_and_timezone_is_valid(tmp_path: Path) -> None:
     assert settings.ollama_model == "qwen3:4b"
     assert settings.timezone == "America/Los_Angeles"
     assert settings.notion_token == ""
+    assert settings.delivery_channel == "telegram"
     assert settings.school_hours["mon"][0].start == "07:30"
     assert settings.canvas_excluded_course_ids == []
 
@@ -50,6 +51,20 @@ def test_canvas_token_is_loaded_from_vault(tmp_path: Path) -> None:
     )
 
     assert settings.canvas_access_token == "vault-canvas-token"
+
+
+def test_inkbox_key_is_loaded_from_vault_and_delivery_mode_is_configurable(
+    tmp_path: Path,
+) -> None:
+    env = tmp_path / ".env"
+    write_env(env, DELIVERY_CHANNEL="imessage_with_telegram_fallback")
+    settings = load_settings(
+        env,
+        secret_vault=Vault({"INKBOX_API_KEY": "vault-inkbox-key"}),
+    )
+
+    assert settings.inkbox_api_key == "vault-inkbox-key"
+    assert settings.delivery_channel == "imessage_with_telegram_fallback"
 
 
 def test_microsoft_renewal_credentials_are_loaded_from_vault(tmp_path: Path) -> None:
