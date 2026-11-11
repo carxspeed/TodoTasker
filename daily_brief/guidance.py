@@ -28,7 +28,44 @@ CANVAS_INSTRUCTION_LIMIT = 800
 
 
 class LLMUnavailable(RuntimeError):
-    pass
+    def __init__(self, message: str, *, code: str = "unavailable", retryable: bool = False, retry_after: float = 0):
+        super().__init__(message)
+        self.code = code
+        self.retryable = retryable
+        self.retry_after = retry_after
+
+
+class InvalidGuidance(ValueError):
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+def _anthropic_schema(value: Any) -> Any:
+    """Send supported grammar constraints; retain full validation locally."""
+    if isinstance(value, list):
+        return [_anthropic_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    constraints = {key: value[key] for key in ("minLength", "maxLength", "maxItems", "uniqueItems") if key in value}
+    if value.get("minItems", 0) > 1:
+        constraints["minItems"] = value["minItems"]
+    result = {key: _anthropic_schema(item) for key, item in value.items() if key not in constraints}
+    if constraints:
+        result["description"] = (result.get("description", "") + " Constraints: " + json.dumps(constraints)).strip()
+    return result
+
+
+def _validation_code(exc: Exception) -> str:
+    if isinstance(exc, InvalidGuidance):
+        return exc.code
+    if isinstance(exc, json.JSONDecodeError):
+        return "invalid_json"
+    if isinstance(exc, jsonschema.ValidationError):
+        return "schema_validation"
+    if isinstance(exc, ValidationError):
+        return "contract_validation"
+    return "task_contract"
 
 
 def _is_local_ollama_url(base_url: str) -> bool:
@@ -383,9 +420,10 @@ def _anthropic_call(
     *,
     model: str,
     api_key: str,
+    repair_code: str = "",
 ) -> str:
     if not api_key:
-        raise LLMUnavailable("Anthropic API key is missing")
+        raise LLMUnavailable("Anthropic API key is missing", code="missing_key")
     headers = {
         "content-type": "application/json",
         "x-api-key": api_key,
@@ -398,9 +436,10 @@ def _anthropic_call(
             headers=headers,
             json={
                 "model": model,
-                "max_tokens": min(1200, max(256, 160 + 90 * len(request.keys))),
+                "max_tokens": min(8192, max(1536, 512 + 400 * len(request.keys))) * (2 if repair_code == "truncated" else 1),
                 "thinking": {"type": "disabled"},
-                "system": request.system,
+                "output_config": {"format": {"type": "json_schema", "schema": _anthropic_schema(request.schema)}},
+                "system": request.system + (LOCAL_REPAIR_SUFFIX + " Validation category: " + repair_code if repair_code else ""),
                 "messages": [
                     {
                         "role": "user",
@@ -408,15 +447,37 @@ def _anthropic_call(
                     }
                 ],
             },
-            timeout=300,
+            timeout=(10, 60),
         )
-        response.raise_for_status()
-        for block in response.json().get("content", []):
-            if block.get("type") == "text" and isinstance(block.get("text"), str):
-                return block["text"]
-        raise LLMUnavailable("Anthropic returned no text guidance")
+    except requests.Timeout as exc:
+        raise LLMUnavailable("Anthropic timed out", code="timeout", retryable=True) from exc
+    except requests.ConnectionError as exc:
+        raise LLMUnavailable("Anthropic connection failed", code="connection", retryable=True) from exc
     except requests.RequestException as exc:
-        raise LLMUnavailable("Anthropic is unavailable") from exc
+        raise LLMUnavailable("Anthropic transport failed", code="transport", retryable=True) from exc
+    if response.status_code >= 400:
+        try:
+            retry_after = max(0, float(getattr(response, "headers", {}).get("retry-after", 0)))
+        except (TypeError, ValueError):
+            retry_after = 0
+        raise LLMUnavailable(
+            "Anthropic API request failed",
+            code=f"http_{response.status_code}",
+            retryable=response.status_code in {408, 409, 429, 500, 502, 503, 504, 529} and retry_after <= 30,
+            retry_after=retry_after,
+        )
+    body = response.json()
+    stop_reason = body.get("stop_reason")
+    if stop_reason == "max_tokens":
+        raise InvalidGuidance("truncated")
+    if stop_reason == "refusal":
+        raise LLMUnavailable("Anthropic refused guidance", code="refusal")
+    if stop_reason not in (None, "end_turn"):
+        raise InvalidGuidance("incomplete_response")
+    text = "".join(block["text"] for block in body.get("content", []) if block.get("type") == "text" and isinstance(block.get("text"), str))
+    if not text:
+        raise InvalidGuidance("empty_response")
+    return text
 
 
 def generate_guidance_outcome(
@@ -445,8 +506,9 @@ def generate_guidance_outcome(
     total_attempts = 0
     failures: list[str] = []
     for candidate, candidate_model in candidates:
-        unavailable = False
-        for attempt in range(2):
+        repair_code = ""
+        invalid_count = 0
+        for attempt in range(3 if candidate == "anthropic" else 2):
             total_attempts += 1
             try:
                 if candidate == "local":
@@ -463,6 +525,7 @@ def generate_guidance_outcome(
                         request,
                         model=candidate_model,
                         api_key=anthropic_api_key,
+                        repair_code=repair_code,
                     )
                 result = _enforce_specific_guidance(
                     validate_guidance_text(text, request), selected
@@ -473,12 +536,14 @@ def generate_guidance_outcome(
                     candidate,
                     candidate_model,
                     "success",
-                    "+".join(failures),
+                    "+".join(dict.fromkeys(failures)),
                     total_attempts,
                 )
-            except LLMUnavailable:
-                failures.append(f"{candidate}_unavailable")
-                unavailable = True
+            except LLMUnavailable as exc:
+                failures.append(f"{candidate}_{exc.code}")
+                if candidate == "anthropic" and exc.retryable and attempt < 2:
+                    time.sleep(max(2 ** attempt, exc.retry_after))
+                    continue
                 break
             except (
                 KeyError,
@@ -487,17 +552,18 @@ def generate_guidance_outcome(
                 ValueError,
                 ValidationError,
                 jsonschema.ValidationError,
-            ):
-                if attempt == 1:
-                    failures.append(f"{candidate}_invalid_response")
-        if unavailable:
-            continue
+            ) as exc:
+                repair_code = _validation_code(exc)
+                failures.append(f"{candidate}_{repair_code}")
+                invalid_count += 1
+                if invalid_count >= 2:
+                    break
     return GuidanceOutcome(
         None,
         "deterministic",
         "",
         "fallback",
-        "+".join(failures) or "model_failed",
+        "+".join(dict.fromkeys(failures)) or "model_failed",
         total_attempts,
     )
 

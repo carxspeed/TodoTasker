@@ -482,7 +482,24 @@ MODEL_PROVIDER=anthropic
 ANTHROPIC_MODEL=replace_with_a_model_available_to_your_account
 ```
 
-Evening check-ins remain local regardless of this setting. If the remote model is unavailable, morning preparation uses deterministic fallback guidance.
+Evening check-ins remain local regardless of this setting. Morning guidance uses
+Anthropic's structured JSON output and then validates every task key, character
+limit, and focus choice locally. The output budget scales with the number of tasks;
+a truncated response receives one repair with more output space. Invalid responses
+receive a repair instruction naming the validation category.
+
+Temporary connection failures, timeouts, rate limits, and retryable server errors
+receive up to three Anthropic attempts with bounded backoff. Authentication and
+request errors do not repeat. If Anthropic still fails, TodoTasker tries local
+Ollama, then uses Python guidance. These short retries can recover a brief network
+interruption; they cannot keep a disconnected laptop online or run while it is off.
+
+`brief.py status` and `state/runs.log` distinguish `anthropic_connection`,
+`anthropic_timeout`, `anthropic_http_401`, `anthropic_http_429`,
+`anthropic_truncated`, and validation failures such as `anthropic_invalid_json`
+or `anthropic_schema_validation`. A successful repair can retain the earlier error
+code while `ai_status=success` records the recovery. Diagnostics do not include raw
+API error bodies, credentials, or assignment text.
 
 ## Common commands
 

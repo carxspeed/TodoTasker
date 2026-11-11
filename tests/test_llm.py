@@ -409,6 +409,89 @@ def test_anthropic_generation_uses_current_api_parameters() -> None:
     assert session.post_calls == 1
     assert "temperature" not in session.payload
     assert session.payload["thinking"] == {"type": "disabled"}
+    assert session.payload["output_config"]["format"]["type"] == "json_schema"
+    assert session.payload["max_tokens"] >= 1536
+
+
+@pytest.mark.parametrize("status,retry_count", [(401, 1), (400, 1), (429, 3), (529, 3)])
+def test_anthropic_http_errors_are_sanitized_and_retry_only_transient(
+    monkeypatch, status, retry_count
+) -> None:
+    delays = []
+    monkeypatch.setattr(guidance.time, "sleep", delays.append)
+
+    class ErrorSession(Session):
+        def post(self, *args, **kwargs):
+            self.post_calls += 1
+            response = Response({"error": {"message": "secret detail"}}, status=status)
+            response.headers = {"retry-after": "3"}
+            return response
+
+    session = ErrorSession("")
+    result = generate_guidance_outcome(
+        [task(1)], [], TOTALS, date(2026, 9, 2),
+        provider="anthropic", model="claude-sonnet-5",
+        anthropic_api_key="secret-key", session=session, fallback_to_local=False,
+    )
+    assert session.post_calls == retry_count
+    assert result.attempts == retry_count
+    assert result.failure_code == f"anthropic_http_{status}"
+    assert delays == ([3, 3] if retry_count == 3 else [])
+    assert "secret" not in result.failure_code
+
+
+def test_anthropic_truncation_retries_with_more_space_and_specific_repair(monkeypatch) -> None:
+    class TruncatedSession(Session):
+        def __init__(self):
+            super().__init__("")
+            self.payloads = []
+
+        def post(self, *args, **kwargs):
+            self.payloads.append(kwargs["json"])
+            return Response({
+                "stop_reason": "max_tokens" if len(self.payloads) == 1 else "end_turn",
+                "content": [{"type": "text", "text": response_for(["assignment:1"])}],
+            })
+
+    session = TruncatedSession()
+    result = generate_guidance_outcome(
+        [task(1)], [], TOTALS, date(2026, 9, 2),
+        provider="anthropic", model="claude-sonnet-5", anthropic_api_key="test",
+        session=session, fallback_to_local=False,
+    )
+    assert result.result is not None
+    assert result.attempts == 2
+    assert result.failure_code == "anthropic_truncated"
+    assert session.payloads[1]["max_tokens"] == 2 * session.payloads[0]["max_tokens"]
+    assert "Validation category: truncated" in session.payloads[1]["system"]
+
+
+def test_anthropic_grammar_preserves_property_names_and_local_constraints() -> None:
+    request = build_guidance_request([task(1), task(2)], [], TOTALS, date(2026, 9, 2))
+    schema = guidance._anthropic_schema(request.schema)
+    assert "maxItems" not in schema["properties"]["task_guidance"]
+    assert "maxItems" in request.schema["properties"]["task_guidance"]
+    assert schema["properties"]["task_guidance"]["items"]["properties"]["key"]["enum"] == request.keys
+
+
+def test_anthropic_timeout_can_recover_without_local_fallback(monkeypatch) -> None:
+    monkeypatch.setattr(guidance.time, "sleep", lambda _: None)
+
+    class TimeoutSession(Session):
+        def post(self, *args, **kwargs):
+            self.post_calls += 1
+            if self.post_calls == 1:
+                raise requests.Timeout("private URL and key")
+            return Response({"stop_reason": "end_turn", "content": [{"type": "text", "text": response_for(["assignment:1"])}]})
+
+    result = generate_guidance_outcome(
+        [task(1)], [], TOTALS, date(2026, 9, 2),
+        provider="anthropic", model="claude-sonnet-5", anthropic_api_key="test",
+        session=TimeoutSession(""), fallback_to_local=False,
+    )
+    assert result.source == "anthropic"
+    assert result.failure_code == "anthropic_timeout"
+    assert result.attempts == 2
 
 
 def test_anthropic_generation_retries_one_invalid_structured_response() -> None:
@@ -434,7 +517,8 @@ def test_anthropic_generation_retries_one_invalid_structured_response() -> None:
     assert session.post_calls == 2
 
 
-def test_anthropic_unavailable_falls_back_to_local_ollama() -> None:
+def test_anthropic_unavailable_falls_back_to_local_ollama(monkeypatch) -> None:
+    monkeypatch.setattr(guidance.time, "sleep", lambda _: None)
     class FallbackSession(Session):
         def post(self, url, *args, **kwargs):
             self.post_calls += 1
@@ -458,11 +542,12 @@ def test_anthropic_unavailable_falls_back_to_local_ollama() -> None:
     assert outcome.result is not None
     assert outcome.source == "local"
     assert outcome.model == "qwen36:latest"
-    assert outcome.failure_code == "anthropic_unavailable"
-    assert outcome.attempts == 2
+    assert outcome.failure_code == "anthropic_connection"
+    assert outcome.attempts == 4
 
 
-def test_all_model_failures_return_sanitized_deterministic_diagnostics() -> None:
+def test_all_model_failures_return_sanitized_deterministic_diagnostics(monkeypatch) -> None:
+    monkeypatch.setattr(guidance.time, "sleep", lambda _: None)
     class OfflineSession(Session):
         def get(self, *args, **kwargs):
             raise requests.ConnectionError("private local detail")
@@ -484,7 +569,7 @@ def test_all_model_failures_return_sanitized_deterministic_diagnostics() -> None
 
     assert outcome.result is None
     assert outcome.source == "deterministic"
-    assert outcome.failure_code == "anthropic_unavailable+local_unavailable"
+    assert outcome.failure_code == "anthropic_connection+local_unavailable"
     assert "private" not in outcome.failure_code
 
 
